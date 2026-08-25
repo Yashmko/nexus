@@ -3,6 +3,7 @@
  * system—ledger-like metadata, no decorative dashboard clutter, and semantic color only for decisions.
  */
 import { useMemo, useState } from "react";
+import { jsPDF } from "jspdf";
 import {
   Activity,
   AlertTriangle,
@@ -83,17 +84,32 @@ function EmptyExecutionNotice() {
 export default function FunctionalWorkspace({ view, onReturn, onNavigate }: WorkspaceProps) {
   const [selectedFindingId, setSelectedFindingId] = useState("FND-042");
   const [findingFilter, setFindingFilter] = useState("All");
+  const [findingQuery, setFindingQuery] = useState("");
   const [selectedEvidence, setSelectedEvidence] = useState("EVD-2161");
+  const [evidenceQuery, setEvidenceQuery] = useState("");
+  const [evidenceKind, setEvidenceKind] = useState("All");
   const [selectedAgent, setSelectedAgent] = useState("CriticAgent");
   const [toolRows, setToolRows] = useState(tools);
   const [terminalCommand, setTerminalCommand] = useState("nexus scope show");
   const [terminalEntries, setTerminalEntries] = useState<string[]>(["NEXUS frontend console", "Execution engine: disconnected", "Use this console to prepare a command for the backend integration."]);
-  const [reportFormat, setReportFormat] = useState<"Markdown" | "JSON">("Markdown");
+  const [reportFormat, setReportFormat] = useState<"Markdown" | "JSON" | "PDF">("Markdown");
+  const [reportNotice, setReportNotice] = useState<string | null>(null);
   const [settings, setSettings] = useState({ compact: true, prompts: true, redaction: true, provider: "Ollama (local)" });
   const [surfaceAsset, setSurfaceAsset] = useState("api.acme.internal");
 
   const selectedFinding = findings.find((finding) => finding.id === selectedFindingId) ?? findings[0];
-  const filteredFindings = findingFilter === "All" ? findings : findings.filter((finding) => finding.state === findingFilter);
+  const filteredFindings = findings.filter((finding) => {
+    const matchesFilter = findingFilter === "All" || finding.state === findingFilter;
+    const query = findingQuery.trim().toLowerCase();
+    const matchesQuery = !query || [finding.id, finding.title, finding.severity, finding.state, finding.detail].join(" ").toLowerCase().includes(query);
+    return matchesFilter && matchesQuery;
+  });
+  const filteredEvidence = evidence.filter((item) => {
+    const matchesKind = evidenceKind === "All" || item.kind === evidenceKind;
+    const query = evidenceQuery.trim().toLowerCase();
+    const matchesQuery = !query || [item.id, item.title, item.kind, item.stage, item.integrity].join(" ").toLowerCase().includes(query);
+    return matchesKind && matchesQuery;
+  });
   const currentEvidence = evidence.find((item) => item.id === selectedEvidence) ?? evidence[0];
   const currentAgent = agents.find((agent) => agent.name === selectedAgent) ?? agents[0];
 
@@ -101,6 +117,35 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
     const contents = reportFormat === "Markdown"
       ? `# NEXUS Mission Record\n\n## Scope\n10.10.0.0/16, acme.internal\n\n## Finding\n${selectedFinding.title}\n\nState: ${selectedFinding.state}\nConfidence: ${selectedFinding.confidence}\n\n## Evidence\n${evidence.map((item) => `- ${item.id}: ${item.title}`).join("\n")}`
       : JSON.stringify({ mission: "MIS-2025-05-21-1437", scope: ["10.10.0.0/16", "acme.internal"], finding: selectedFinding, evidence }, null, 2);
+    if (reportFormat === "PDF") {
+      const document = new jsPDF({ unit: "pt", format: "letter" });
+      const margin = 48;
+      let y = 58;
+      const addLine = (text: string, size = 10, color: [number, number, number] = [50, 61, 60]) => {
+        document.setFont("courier", size >= 14 ? "bold" : "normal");
+        document.setFontSize(size);
+        document.setTextColor(...color);
+        const lines = document.splitTextToSize(text, 516);
+        document.text(lines, margin, y);
+        y += lines.length * (size + 5) + 8;
+      };
+      document.setFillColor(9, 13, 14);
+      document.rect(0, 0, 612, 792, "F");
+      addLine("NEXUS / MISSION RECORD", 17, [218, 232, 225]);
+      addLine("ACME Internal Network Assessment", 12, [141, 164, 181]);
+      y += 8;
+      addLine("SCOPE", 10, [165, 197, 143]);
+      addLine("10.10.0.0/16, acme.internal");
+      addLine("FINDING", 10, [165, 197, 143]);
+      addLine(`${selectedFinding.id} — ${selectedFinding.title}`);
+      addLine(`State: ${selectedFinding.state} | Confidence: ${selectedFinding.confidence}`);
+      addLine("EVIDENCE CUSTODY", 10, [165, 197, 143]);
+      evidence.forEach((item) => addLine(`${item.id} — ${item.title} (${item.integrity})`));
+      addLine("This record was exported by the NEXUS frontend prototype. Connect the NEXUS core for live mission evidence.", 8, [169, 181, 177]);
+      document.save("nexus-mission-record.pdf");
+      setReportNotice("PDF report exported to your device.");
+      return;
+    }
     const blob = new Blob([contents], { type: reportFormat === "Markdown" ? "text/markdown" : "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -108,6 +153,7 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
     anchor.download = `nexus-mission-record.${reportFormat === "Markdown" ? "md" : "json"}`;
     anchor.click();
     URL.revokeObjectURL(url);
+    setReportNotice(`${reportFormat} report exported to your device.`);
   };
 
   const renderDashboard = () => <>
@@ -131,13 +177,13 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
   </>;
 
   const renderFindings = () => <>
-    <WorkspaceHeader title="Findings register" kicker="Validated security record" icon={AlertTriangle} onReturn={onReturn}><div className="filter-group">{["All", "Validated", "Rejected", "In review"].map((filter) => <button key={filter} onClick={() => setFindingFilter(filter)} className={findingFilter === filter ? "active" : ""}>{filter}</button>)}</div></WorkspaceHeader>
-    <section className="findings-layout"><aside className="finding-list">{filteredFindings.map((finding) => <button key={finding.id} className={`finding-list-item ${selectedFinding.id === finding.id ? "selected" : ""}`} onClick={() => setSelectedFindingId(finding.id)}><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><strong>{finding.title}</strong><small>{finding.id} · {finding.confidence}</small><LedgerStamp tone={finding.state === "Validated" ? "success" : finding.state === "Rejected" ? "danger" : "warning"}>{finding.state}</LedgerStamp></button>)}</aside><article className="finding-record"><div className="record-title"><div><span className="eyebrow">{selectedFinding.id}</span><h2>{selectedFinding.title}</h2></div><LedgerStamp tone={selectedFinding.state === "Validated" ? "success" : selectedFinding.state === "Rejected" ? "danger" : "warning"}>{selectedFinding.state}</LedgerStamp></div><div className="record-grid"><p><strong>Hypothesis</strong>{selectedFinding.detail}</p><p><strong>Critic result</strong>{selectedFinding.state === "Rejected" ? "The current record does not support a controllable escalation path." : "Competing explanations have been reduced to an insufficient alternative."}</p><p><strong>Validation</strong>{selectedFinding.state === "Validated" ? "Reproducible evidence supports an operator review." : "More evidence is required before any report claim."}</p><p><strong>Impact</strong>Classification remains tied to validated evidence and the authorized mission scope.</p></div><div className="record-actions"><button onClick={() => onNavigate("Evidence")}>Open {selectedFinding.evidence} linked evidence items</button><button onClick={() => onNavigate("Reports")}>Open report record</button></div></article></section>
+    <WorkspaceHeader title="Findings register" kicker="Validated security record" icon={AlertTriangle} onReturn={onReturn}><label className="workspace-search"><Search size={14} /><input value={findingQuery} onChange={(event) => setFindingQuery(event.target.value)} placeholder="Search finding, ID, severity..." aria-label="Search findings" /></label><div className="filter-group">{["All", "Validated", "Rejected", "In review"].map((filter) => <button key={filter} onClick={() => setFindingFilter(filter)} className={findingFilter === filter ? "active" : ""}>{filter}</button>)}</div></WorkspaceHeader>
+    <section className="register-result-line"><span>{filteredFindings.length} record{filteredFindings.length === 1 ? "" : "s"} shown</span>{(findingQuery || findingFilter !== "All") && <button onClick={() => { setFindingQuery(""); setFindingFilter("All"); }}>Clear search and filters</button>}</section><section className="findings-layout"><aside className="finding-list">{filteredFindings.length ? filteredFindings.map((finding) => <button key={finding.id} className={`finding-list-item ${selectedFinding.id === finding.id ? "selected" : ""}`} onClick={() => setSelectedFindingId(finding.id)}><span className={`severity ${finding.severity.toLowerCase()}`}>{finding.severity}</span><strong>{finding.title}</strong><small>{finding.id} · {finding.confidence}</small><LedgerStamp tone={finding.state === "Validated" ? "success" : finding.state === "Rejected" ? "danger" : "warning"}>{finding.state}</LedgerStamp></button>) : <p className="register-empty">No findings match this query. Adjust the search terms or clear the active filter.</p>}</aside><article className="finding-record"><div className="record-title"><div><span className="eyebrow">{selectedFinding.id}</span><h2>{selectedFinding.title}</h2></div><LedgerStamp tone={selectedFinding.state === "Validated" ? "success" : selectedFinding.state === "Rejected" ? "danger" : "warning"}>{selectedFinding.state}</LedgerStamp></div><div className="record-grid"><p><strong>Hypothesis</strong>{selectedFinding.detail}</p><p><strong>Critic result</strong>{selectedFinding.state === "Rejected" ? "The current record does not support a controllable escalation path." : "Competing explanations have been reduced to an insufficient alternative."}</p><p><strong>Validation</strong>{selectedFinding.state === "Validated" ? "Reproducible evidence supports an operator review." : "More evidence is required before any report claim."}</p><p><strong>Impact</strong>Classification remains tied to validated evidence and the authorized mission scope.</p></div><div className="record-actions"><button onClick={() => onNavigate("Evidence")}>Open {selectedFinding.evidence} linked evidence items</button><button onClick={() => onNavigate("Reports")}>Open report record</button></div></article></section>
   </>;
 
   const renderEvidence = () => <>
-    <WorkspaceHeader title="Evidence custody" kicker="Preserved artifacts" icon={Archive} onReturn={onReturn}><LedgerStamp tone="success"><BadgeCheck size={12} /> Chain intact</LedgerStamp><button className="workspace-action" onClick={() => onNavigate("Reports")}>Report record <ChevronRight size={15} /></button></WorkspaceHeader>
-    <section className="evidence-layout"><aside className="evidence-register">{evidence.map((item) => <button key={item.id} className={selectedEvidence === item.id ? "selected" : ""} onClick={() => setSelectedEvidence(item.id)}><span>{item.id}</span><strong>{item.title}</strong><small>{item.kind} · {item.time}</small></button>)}</aside><article className="evidence-record"><div className="record-title"><div><span className="eyebrow">{currentEvidence.id}</span><h2>{currentEvidence.title}</h2></div><LedgerStamp tone="success">{currentEvidence.integrity}</LedgerStamp></div><dl><div><dt>Artifact type</dt><dd>{currentEvidence.kind}</dd></div><div><dt>Mission stage</dt><dd>{currentEvidence.stage}</dd></div><div><dt>Captured</dt><dd>21 May 2025 · {currentEvidence.time}</dd></div><div><dt>Handling</dt><dd>Redacted at capture</dd></div></dl><pre>{`Evidence record: ${currentEvidence.id}\nSource: ${currentEvidence.kind}\nIntegrity: ${currentEvidence.integrity}\n\nRecorded action was contained within the approved\nlocal demonstration scope. No external target data is present.`}</pre><button className="workspace-action" onClick={() => onNavigate("Findings")}>Return to linked finding <ChevronRight size={14} /></button></article></section>
+    <WorkspaceHeader title="Evidence custody" kicker="Preserved artifacts" icon={Archive} onReturn={onReturn}><label className="workspace-search"><Search size={14} /><input value={evidenceQuery} onChange={(event) => setEvidenceQuery(event.target.value)} placeholder="Search artifact, ID, stage..." aria-label="Search evidence" /></label><div className="filter-group">{["All", "Tool output", "Configuration", "Command output"].map((kind) => <button key={kind} onClick={() => setEvidenceKind(kind)} className={evidenceKind === kind ? "active" : ""}>{kind === "Configuration" ? "Config" : kind === "Command output" ? "Command" : kind}</button>)}</div><LedgerStamp tone="success"><BadgeCheck size={12} /> Chain intact</LedgerStamp></WorkspaceHeader>
+    <section className="register-result-line"><span>{filteredEvidence.length} artifact{filteredEvidence.length === 1 ? "" : "s"} shown</span>{(evidenceQuery || evidenceKind !== "All") && <button onClick={() => { setEvidenceQuery(""); setEvidenceKind("All"); }}>Clear search and filters</button>}</section><section className="evidence-layout"><aside className="evidence-register">{filteredEvidence.length ? filteredEvidence.map((item) => <button key={item.id} className={selectedEvidence === item.id ? "selected" : ""} onClick={() => setSelectedEvidence(item.id)}><span>{item.id}</span><strong>{item.title}</strong><small>{item.kind} · {item.time}</small></button>) : <p className="register-empty">No evidence matches this query. Adjust the search terms or clear the active filter.</p>}</aside><article className="evidence-record"><div className="record-title"><div><span className="eyebrow">{currentEvidence.id}</span><h2>{currentEvidence.title}</h2></div><LedgerStamp tone="success">{currentEvidence.integrity}</LedgerStamp></div><dl><div><dt>Artifact type</dt><dd>{currentEvidence.kind}</dd></div><div><dt>Mission stage</dt><dd>{currentEvidence.stage}</dd></div><div><dt>Captured</dt><dd>21 May 2025 · {currentEvidence.time}</dd></div><div><dt>Handling</dt><dd>Redacted at capture</dd></div></dl><pre>{`Evidence record: ${currentEvidence.id}\nSource: ${currentEvidence.kind}\nIntegrity: ${currentEvidence.integrity}\n\nRecorded action was contained within the approved\nlocal demonstration scope. No external target data is present.`}</pre><button className="workspace-action" onClick={() => onNavigate("Findings")}>Return to linked finding <ChevronRight size={14} /></button></article></section>
   </>;
 
   const renderAgents = () => <>
@@ -156,8 +202,8 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
   </>;
 
   const renderReports = () => <>
-    <WorkspaceHeader title="Report record" kicker="Exportable mission summary" icon={FileText} onReturn={onReturn}><div className="format-switch"><button className={reportFormat === "Markdown" ? "active" : ""} onClick={() => setReportFormat("Markdown")}>Markdown</button><button className={reportFormat === "JSON" ? "active" : ""} onClick={() => setReportFormat("JSON")}>JSON</button></div><button className="workspace-action" onClick={exportReport}><Download size={14} /> Download {reportFormat}</button></WorkspaceHeader>
-    <section className="report-layout"><article className="report-preview"><span className="eyebrow">NEXUS / Mission record</span><h2>ACME Internal Network Assessment</h2><div className="report-section"><strong>Executive status</strong><p>One finding has sufficient evidence for review. One competing path was rejected. All displayed actions are confined to the recorded scope.</p></div><div className="report-section"><strong>Scope</strong><p>10.10.0.0/16 and acme.internal</p></div><div className="report-section"><strong>Finding</strong><p>{selectedFinding.title} · {selectedFinding.state} · {selectedFinding.confidence} confidence</p></div><div className="report-section"><strong>Evidence</strong><p>{evidence.length} preserved artifacts with intact custody records.</p></div></article><aside className="report-side"><span className="eyebrow">Export preview</span><h2>{reportFormat}</h2><p>The download is generated locally from the current frontend record.</p><button className="workspace-action" onClick={exportReport}><Download size={14} /> Download file</button></aside></section>
+    <WorkspaceHeader title="Report record" kicker="Exportable mission summary" icon={FileText} onReturn={onReturn}><div className="format-switch"><button className={reportFormat === "Markdown" ? "active" : ""} onClick={() => setReportFormat("Markdown")}>Markdown</button><button className={reportFormat === "JSON" ? "active" : ""} onClick={() => setReportFormat("JSON")}>JSON</button><button className={reportFormat === "PDF" ? "active" : ""} onClick={() => setReportFormat("PDF")}>PDF</button></div><button className="workspace-action" onClick={exportReport}><Download size={14} /> Export {reportFormat}</button></WorkspaceHeader>
+    <section className="report-layout">{reportNotice && <div className="report-notice"><CircleCheck size={14} /> {reportNotice}</div>}<article className="report-preview"><span className="eyebrow">NEXUS / Mission record</span><h2>ACME Internal Network Assessment</h2><div className="report-section"><strong>Executive status</strong><p>One finding has sufficient evidence for review. One competing path was rejected. All displayed actions are confined to the recorded scope.</p></div><div className="report-section"><strong>Scope</strong><p>10.10.0.0/16 and acme.internal</p></div><div className="report-section"><strong>Finding</strong><p>{selectedFinding.title} · {selectedFinding.state} · {selectedFinding.confidence} confidence</p></div><div className="report-section"><strong>Evidence</strong><p>{evidence.length} preserved artifacts with intact custody records.</p></div></article><aside className="report-side"><span className="eyebrow">Export preview</span><h2>{reportFormat}</h2><p>{reportFormat === "PDF" ? "Creates a styled, downloadable PDF record directly in the browser." : "The download is generated locally from the current frontend record."}</p><button className="workspace-action" onClick={exportReport}><Download size={14} /> Export {reportFormat}</button></aside></section>
   </>;
 
   const renderSettings = () => <>
@@ -176,7 +222,7 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
     if (view === "Reports") return renderReports();
     if (view === "Settings") return renderSettings();
     return renderDashboard();
-  }, [view, selectedFindingId, findingFilter, selectedEvidence, selectedAgent, toolRows, terminalCommand, terminalEntries, reportFormat, settings, surfaceAsset]);
+  }, [view, selectedFindingId, findingFilter, findingQuery, selectedEvidence, evidenceQuery, evidenceKind, selectedAgent, toolRows, terminalCommand, terminalEntries, reportFormat, reportNotice, settings, surfaceAsset]);
 
   return <section className="functional-workspace">{body}</section>;
 }

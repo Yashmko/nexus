@@ -96,6 +96,7 @@ export default function Home() {
   const [isApproved, setIsApproved] = useState(false);
   const [selectedHypothesis, setSelectedHypothesis] = useState<"HYP-01" | "HYP-02">("HYP-02");
   const [evidenceTab, setEvidenceTab] = useState<"Evidence preview" | "Agent log" | "Raw output">("Evidence preview");
+  const [workspaceStatus, setWorkspaceStatus] = useState<string | null>(null);
   const detail = stageDetails[selectedStage];
   const selectedStageData = stages.find((stage) => stage.id === selectedStage) ?? stages[0];
 
@@ -113,9 +114,20 @@ export default function Home() {
     return () => window.clearInterval(replay);
   }, [isPlaying]);
 
+  useEffect(() => {
+    if (!workspaceStatus) return;
+    const timer = window.setTimeout(() => setWorkspaceStatus(null), 2800);
+    return () => window.clearTimeout(timer);
+  }, [workspaceStatus]);
+
   const stepTimeline = (direction: 1 | -1) => {
     setIsPlaying(false);
     setSelectedStage((stage) => Math.min(10, Math.max(1, stage + direction)));
+  };
+
+  const changeWorkspace = (workspace: string) => {
+    setActiveNav(workspace);
+    setWorkspaceStatus(workspace === "Missions" ? "Mission timeline restored. Replay position remains preserved." : `${workspace} workspace opened. Context is linked to the current mission.`);
   };
 
   const currentEvent = useMemo(
@@ -136,7 +148,7 @@ export default function Home() {
 
         <nav className="nav-list">
           {navItems.map(({ label, icon: Icon }) => (
-            <button key={label} className={`nav-item ${activeNav === label ? "selected" : ""}`} onClick={() => setActiveNav(label)}>
+            <button key={label} className={`nav-item ${activeNav === label ? "selected" : ""}`} onClick={() => changeWorkspace(label)}>
               <Icon size={16} strokeWidth={1.7} />
               <span>{label}</span>
             </button>
@@ -178,7 +190,7 @@ export default function Home() {
               <p>Replay ID: RPL-2025-05-21-1437 <span className="divider-dot">·</span> View: Full mission <ChevronDown size={14} /></p>
             </div>
             <div className="utility-controls" aria-label="Timeline utilities">
-              <button title="Inspect evidence register" onClick={() => setActiveNav("Evidence")}><Search size={16} /></button><button title="Restart replay from target" onClick={() => { setIsPlaying(false); setSelectedStage(1); }}><RotateCcw size={16} /></button><button title="Open mission desk" onClick={() => setActiveNav("Dashboard")}><Menu size={16} /></button><button title="Open mission settings" onClick={() => setActiveNav("Settings")}><SlidersHorizontal size={16} /></button>
+              <button title="Inspect evidence register" onClick={() => changeWorkspace("Evidence")}><Search size={16} /></button><button title="Restart replay from target" onClick={() => { setIsPlaying(false); setSelectedStage(1); setWorkspaceStatus("Replay rewound to the target record."); }}><RotateCcw size={16} /></button><button title="Open mission desk" onClick={() => changeWorkspace("Dashboard")}><Menu size={16} /></button><button title="Open mission settings" onClick={() => changeWorkspace("Settings")}><SlidersHorizontal size={16} /></button>
             </div>
           </div>
 
@@ -257,13 +269,14 @@ export default function Home() {
           </section>
 
           <section className="lower-grid">
-            <article className="replay-controls"><h2>Replay controls</h2><button className="primary-control" onClick={() => setIsPlaying((value) => !value)}>{isPlaying ? <Pause size={17} /> : <Play size={17} />}{isPlaying ? "Pause replay" : "Play replay"}</button><div className="control-pair"><button onClick={() => stepTimeline(-1)}><RotateCcw size={15} /> Step back</button><button onClick={() => stepTimeline(1)}>Step forward <RotateCcw size={15} className="mirror" /></button></div><button className="secondary-control" onClick={() => setActiveNav("Evidence")}><GitBranch size={15} /> Compare evidence</button><button className={`approval-action ${isApproved ? "approved" : ""}`} onClick={() => setIsApproved((value) => !value)}>{isApproved ? <><CircleCheck size={16} /> Evidence review authorized</> : <><BadgeCheck size={16} /> Authorize evidence review</>}</button></article>
+            <article className="replay-controls"><h2>Replay controls</h2><button className="primary-control" onClick={() => { setIsPlaying((value) => !value); setWorkspaceStatus(isPlaying ? "Replay paused at the current decision record." : "Timeline replay started. Each stage advances in sequence."); }}>{isPlaying ? <Pause size={17} /> : <Play size={17} />}{isPlaying ? "Pause replay" : "Play replay"}</button><div className="control-pair"><button onClick={() => { stepTimeline(-1); setWorkspaceStatus("Replayed the previous mission stage."); }}><RotateCcw size={15} /> Step back</button><button onClick={() => { stepTimeline(1); setWorkspaceStatus("Advanced to the next mission stage."); }}>Step forward <RotateCcw size={15} className="mirror" /></button></div><button className="secondary-control" onClick={() => changeWorkspace("Evidence")}><GitBranch size={15} /> Compare evidence</button><button className={`approval-action ${isApproved ? "approved" : ""}`} onClick={() => { setIsApproved((value) => !value); setWorkspaceStatus(isApproved ? "Evidence review authorization withdrawn." : "Evidence review authorized. The report record may advance."); }}>{isApproved ? <><CircleCheck size={16} /> Evidence review authorized</> : <><BadgeCheck size={16} /> Authorize evidence review</>}</button></article>
             <article className="event-details"><h2>Event details</h2><p className="current-event">{currentEvent}</p><dl><div><dt>Timestamp</dt><dd>15:28:16 (21 May 2025)</dd></div><div><dt>Agent</dt><dd>ValidatorAgent</dd></div><div><dt>Action</dt><dd>Validation completed</dd></div><div><dt>Result</dt><dd><StatusPill tone={isApproved ? "success" : "warning"}>{isApproved ? "Approved" : "Validated"}</StatusPill></dd></div><div><dt>Confidence</dt><dd>91% <i className="spark green" /></dd></div><div><dt>Evidence</dt><dd><span className="evidence-chip">EVD-2163</span> <span className="evidence-chip">EVD-2164</span></dd></div></dl></article>
             <article className="evidence-preview"><div className="tab-row">{(["Evidence preview", "Agent log", "Raw output"] as const).map((tab) => <button key={tab} onClick={() => setEvidenceTab(tab)} className={evidenceTab === tab ? "active" : ""}>{tab}</button>)}</div><div className="preview-content"><div className="preview-title"><span>{evidenceTab}</span><small>Captured: 21 May 2025 15:28:45</small></div>{evidenceTab === "Evidence preview" ? <pre>{`C:\\inetpub\\wwwroot> whoami\nIIS APPPOOL\\acme_web\n\nC:\\inetpub\\wwwroot> icacls uploads\nuploads  IIS APPPOOL\\acme_web:(M)\n         BUILTIN\\Administrators:(F)\n\nValidation: write access confirmed\nScope: 10.10.0.0/16`}</pre> : evidenceTab === "Agent log" ? <pre>{`[15:28:11] ValidatorAgent: compare permission records\n[15:28:14] EvidenceAgent: chain preserved (2 items)\n[15:28:16] ValidatorAgent: sufficient evidence\n[15:28:18] ScopeGuard: action requires approval`}</pre> : <pre>{`{\n  "finding": "HYP-02",\n  "confidence": 0.91,\n  "validation": "sufficient",\n  "scope": "approved",\n  "evidence": ["EVD-2163", "EVD-2164"]\n}`}</pre>}</div></article>
             <article className="agent-presence"><h2>Agent presence</h2>{agents.map(([name, status, progress], index) => <div className="agent-row" key={name}><span className="agent-avatar">{index + 1}</span><div><strong>{name}</strong><small>{status}</small></div><span className="agent-meter"><i style={{ width: progress }} /></span><b>{progress}</b></div>)}</article>
           </section>
         </section>
-        {activeNav !== "Missions" && <FunctionalWorkspace view={activeNav} onReturn={() => setActiveNav("Missions")} onNavigate={setActiveNav} />}
+        {activeNav !== "Missions" && <FunctionalWorkspace key={activeNav} view={activeNav} onReturn={() => changeWorkspace("Missions")} onNavigate={changeWorkspace} />}
+        {workspaceStatus && <div className="workspace-feedback" role="status"><CircleCheck size={16} /><span>{workspaceStatus}</span></div>}
       </section>
     </main>
   );

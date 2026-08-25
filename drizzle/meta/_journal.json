@@ -8,6 +8,13 @@
       "when": 1787632470022,
       "tag": "0000_curious_gravity",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1787650262007,
+      "tag": "0001_parched_black_widow",
+      "breakpoints": true
     }
   ]
 }

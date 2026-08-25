@@ -336,7 +336,6 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
 
   const body = useMemo(() => {
     if (view === "Dashboard") return renderDashboard();
-    if (view === "Portfolio") return <PortfolioWorkspace onReturn={onReturn} onNavigate={onNavigate} />;
     if (view === "Attack Surface") return renderSurface();
     if (view === "Findings") return renderFindings();
     if (view === "Evidence") return renderEvidence();
@@ -348,5 +347,6 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
     return renderDashboard();
   }, [view, user, isAuthenticated, authLoading, storedReport, displayedReport, comparisonReport, reportHistory, reportHistoryQuery.isFetching, reportQuery.isFetching, saveReportMutation.isPending, selectedFindingId, selectedReportId, comparisonReportId, findingFilter, findingQuery, selectedEvidence, evidenceQuery, evidenceKind, selectedAgent, toolRows, terminalCommand, terminalEntries, reportFormat, reportNotice, settings, surfaceAsset, surfaceQuery, surfaceKind, surfaceRisk]);
 
+  if (view === "Portfolio") return <PortfolioWorkspace onReturn={onReturn} onNavigate={onNavigate} />;
   return <section className="functional-workspace">{body}</section>;
 }

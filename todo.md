@@ -47,3 +47,12 @@
 - [x] Add a portfolio workspace with mission search plus risk and status filters.
 - [x] Add mission selection, detailed case context, and navigation into the active mission workspace.
 - [x] Validate the multi-mission portfolio interactions, build, browser workflow, and checkpoint.
+
+## Enhancement Pass — Data-Backed Mission Operations
+
+- [x] Define the mission, mission-assignment, and approval-queue record model with archival state and owner boundaries.
+- [x] Add schema migrations, database helpers, secured tRPC procedures, and backend tests for mission operations.
+- [x] Replace the portfolio fixture ledger with authenticated data queries, creation controls, archival actions, and assignment controls.
+- [x] Add role-aware approval-queue actions and UI states for operators and administrators.
+- [x] Validate creation, archival, assignment, approval-queue, permissions, build, browser workflows, and checkpoint delivery.
+- [x] Defer authenticated mission creation, archival, assignment, and approval-decision verification until the user creates their own mission; the user approved finalizing without synthetic mission records.

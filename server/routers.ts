@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
-import { archiveMission, assignMission, createMission, decideMissionApproval, getLatestReportRecord, getReportHistory, getReportOwner, listAssignableUsers, listMissionApprovals, listMissionAssignments, listMissions, requestMissionApproval, saveReportRecord } from "./db";
+import { archiveMission, assignMission, createMission, decideMissionApproval, getLatestReportRecord, getReportHistory, getReportOwner, listAssignableUsers, listMissionActivity, listMissionApprovals, listMissionAssignments, listMissionAttachments, listMissionNotifications, listMissions, requestMissionApproval, saveReportRecord, uploadMissionAttachment } from "./db";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
@@ -72,6 +72,22 @@ export const appRouter = router({
       if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "Approval request was not found." });
       return result[0];
     }),
+    activity: protectedProcedure.input(z.object({ missionId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      const result = await listMissionActivity(missionActor(ctx.user), input.missionId);
+      if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "Mission was not found or is outside your workspace." });
+      return result;
+    }),
+    attachments: protectedProcedure.input(z.object({ missionId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      const result = await listMissionAttachments(missionActor(ctx.user), input.missionId);
+      if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "Mission was not found or is outside your workspace." });
+      return result;
+    }),
+    attachEvidence: protectedProcedure.input(z.object({ missionId: z.number().int().positive(), fileName: z.string().min(1).max(512), mimeType: z.string().min(1).max(255), contentBase64: z.string().min(1).max(7_000_000) })).mutation(async ({ ctx, input }) => {
+      const result = await uploadMissionAttachment(missionActor(ctx.user), input.missionId, input);
+      if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "Mission was not found or is outside your workspace." });
+      return result;
+    }),
+    notifications: protectedProcedure.input(z.object({ missionId: z.number().int().positive().optional() }).optional()).query(({ ctx, input }) => listMissionNotifications(missionActor(ctx.user), input?.missionId)),
   }),
 });
 

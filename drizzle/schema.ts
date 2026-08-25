@@ -97,6 +97,55 @@ export const missionApprovals = mysqlTable(
   (table) => [index("mission_approvals_mission_status_idx").on(table.missionId, table.status), index("mission_approvals_approver_status_idx").on(table.assignedApproverId, table.status)],
 );
 
+/** Immutable operational history for mission lifecycle, attachment, and approval events. */
+export const missionActivity = mysqlTable(
+  "mission_activity",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    missionId: int("missionId").notNull(),
+    actorId: int("actorId"),
+    action: varchar("action", { length: 128 }).notNull(),
+    summary: text("summary").notNull(),
+    metadata: json("metadata"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => [index("mission_activity_mission_created_idx").on(table.missionId, table.createdAt)],
+);
+
+/** Attachment metadata only; file bytes are stored in S3 through the storage helper. */
+export const missionAttachments = mysqlTable(
+  "mission_attachments",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    missionId: int("missionId").notNull(),
+    uploadedById: int("uploadedById").notNull(),
+    fileName: varchar("fileName", { length: 512 }).notNull(),
+    mimeType: varchar("mimeType", { length: 255 }).notNull(),
+    fileKey: varchar("fileKey", { length: 1024 }).notNull(),
+    url: varchar("url", { length: 2048 }).notNull(),
+    sizeBytes: int("sizeBytes").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => [index("mission_attachments_mission_created_idx").on(table.missionId, table.createdAt)],
+);
+
+/** Delivery ledger for owner-facing pending-approval alerts. */
+export const missionNotifications = mysqlTable(
+  "mission_notifications",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    missionId: int("missionId").notNull(),
+    approvalId: int("approvalId"),
+    recipientId: int("recipientId"),
+    title: varchar("title", { length: 255 }).notNull(),
+    content: text("content").notNull(),
+    status: mysqlEnum("status", ["queued", "sent", "failed"]).default("queued").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    deliveredAt: timestamp("deliveredAt"),
+  },
+  (table) => [index("mission_notifications_mission_created_idx").on(table.missionId, table.createdAt), index("mission_notifications_approval_idx").on(table.approvalId)],
+);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type ReportRecord = typeof reportRecords.$inferSelect;
@@ -105,3 +154,6 @@ export type Mission = typeof missions.$inferSelect;
 export type InsertMission = typeof missions.$inferInsert;
 export type MissionAssignment = typeof missionAssignments.$inferSelect;
 export type MissionApproval = typeof missionApprovals.$inferSelect;
+export type MissionActivity = typeof missionActivity.$inferSelect;
+export type MissionAttachment = typeof missionAttachments.$inferSelect;
+export type MissionNotification = typeof missionNotifications.$inferSelect;

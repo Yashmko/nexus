@@ -1,8 +1,10 @@
 /** NEXUS database helpers keep report records scoped to the authenticated owner. */
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, missionApprovals, missionAssignments, missions, reportRecords, users } from "../drizzle/schema";
+import { InsertUser, missionActivity, missionApprovals, missionAssignments, missionAttachments, missionNotifications, missions, reportRecords, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
+import { notifyOwner } from "./_core/notification";
+import { storagePut } from "./storage";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -179,6 +181,7 @@ export async function createMission(ownerId: number, input: CreateMissionInput) 
   const mission = result[0];
   if (!mission) throw new Error("Mission could not be created.");
   await db.insert(missionAssignments).values({ missionId: mission.id, userId: ownerId, assignedById: ownerId, role: "analyst" });
+  await recordMissionActivity(mission.id, ownerId, "mission_created", `Created mission ${mission.missionKey}.`, { account: mission.account, scope: mission.scope, risk: mission.risk });
   return mission;
 }
 
@@ -189,6 +192,7 @@ export async function archiveMission(actor: Actor, missionId: number) {
   const db = await getDb();
   if (!db) throw new Error("Mission storage is unavailable. Configure the project database and try again.");
   await db.update(missions).set({ archived: true, status: "archived" }).where(eq(missions.id, missionId));
+  await recordMissionActivity(missionId, actor.id, "mission_archived", `Archived mission ${mission.missionKey}.`);
   return getMission(actor, missionId);
 }
 
@@ -222,6 +226,7 @@ export async function assignMission(actor: Actor, missionId: number, userId: num
   } else {
     await db.insert(missionAssignments).values({ missionId, userId, assignedById: actor.id, role });
   }
+  await recordMissionActivity(missionId, actor.id, "assignment_updated", `Updated ${role} assignment for user ${userId}.`, { userId, role });
   return listMissionAssignments(actor, missionId);
 }
 
@@ -231,6 +236,12 @@ export async function requestMissionApproval(actor: Actor, missionId: number, in
   const db = await getDb();
   if (!db) throw new Error("Mission storage is unavailable. Configure the project database and try again.");
   await db.insert(missionApprovals).values({ missionId, requestedById: actor.id, type: input.type, summary: input.summary, assignedApproverId: input.assignedApproverId ?? null });
+  const inserted = await db.select().from(missionApprovals).where(and(eq(missionApprovals.missionId, missionId), eq(missionApprovals.requestedById, actor.id))).orderBy(desc(missionApprovals.id)).limit(1);
+  const approval = inserted[0];
+  if (approval) {
+    await recordMissionActivity(missionId, actor.id, "approval_requested", `Requested ${input.type} approval.`, { approvalId: approval.id, assignedApproverId: input.assignedApproverId ?? null });
+    await notifyPendingApproval(missionId, approval.id, input.assignedApproverId ?? null, mission.missionKey, input.type, input.summary);
+  }
   return listMissionApprovals(actor, missionId);
 }
 
@@ -257,5 +268,82 @@ export async function decideMissionApproval(actor: Actor, approvalId: number, de
   if (record.status !== "pending") throw new Error("Only a pending approval can be decided.");
   if (actor.role !== "admin" && record.assignedApproverId !== actor.id) throw new Error("Only the assigned approver or an administrator can decide this request.");
   await db.update(missionApprovals).set({ status: decision, decisionNote, decidedById: actor.id, decidedAt: new Date() }).where(eq(missionApprovals.id, approvalId));
+  await recordMissionActivity(record.missionId, actor.id, `approval_${decision}`, `${decision === "approved" ? "Approved" : "Rejected"} ${record.type} request.`, { approvalId, decisionNote });
   return db.select().from(missionApprovals).where(eq(missionApprovals.id, approvalId)).limit(1);
+}
+
+export async function recordMissionActivity(missionId: number, actorId: number | null, action: string, summary: string, metadata?: unknown) {
+  const db = await getDb();
+  if (!db) throw new Error("Mission storage is unavailable. Configure the project database and try again.");
+  await db.insert(missionActivity).values({ missionId, actorId, action, summary, metadata: metadata ?? null });
+}
+
+export async function listMissionActivity(actor: Actor, missionId: number) {
+  const mission = await getMission(actor, missionId);
+  if (!mission) return null;
+  const db = await getDb();
+  if (!db) throw new Error("Mission storage is unavailable. Configure the project database and try again.");
+  return db
+    .select({ id: missionActivity.id, missionId: missionActivity.missionId, actorId: missionActivity.actorId, action: missionActivity.action, summary: missionActivity.summary, metadata: missionActivity.metadata, createdAt: missionActivity.createdAt, actorName: users.name, actorEmail: users.email })
+    .from(missionActivity)
+    .leftJoin(users, eq(missionActivity.actorId, users.id))
+    .where(eq(missionActivity.missionId, missionId))
+    .orderBy(desc(missionActivity.createdAt), desc(missionActivity.id));
+}
+
+type AttachmentInput = { fileName: string; mimeType: string; contentBase64: string };
+
+export async function uploadMissionAttachment(actor: Actor, missionId: number, input: AttachmentInput) {
+  const mission = await getMission(actor, missionId);
+  if (!mission) return null;
+  const db = await getDb();
+  if (!db) throw new Error("Mission storage is unavailable. Configure the project database and try again.");
+  const safeFileName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 180) || "evidence.bin";
+  const content = Buffer.from(input.contentBase64, "base64");
+  if (!content.length) throw new Error("Evidence attachment is empty.");
+  if (content.byteLength > 5 * 1024 * 1024) throw new Error("Evidence attachments are limited to 5 MB.");
+  const { key, url } = await storagePut(`missions/${missionId}/evidence/${safeFileName}`, content, input.mimeType);
+  await db.insert(missionAttachments).values({ missionId, uploadedById: actor.id, fileName: safeFileName, mimeType: input.mimeType, fileKey: key, url, sizeBytes: content.byteLength });
+  await recordMissionActivity(missionId, actor.id, "evidence_attached", `Attached evidence file ${safeFileName}.`, { fileName: safeFileName, mimeType: input.mimeType, sizeBytes: content.byteLength });
+  return listMissionAttachments(actor, missionId);
+}
+
+export async function listMissionAttachments(actor: Actor, missionId: number) {
+  const mission = await getMission(actor, missionId);
+  if (!mission) return null;
+  const db = await getDb();
+  if (!db) throw new Error("Mission storage is unavailable. Configure the project database and try again.");
+  return db
+    .select({ id: missionAttachments.id, missionId: missionAttachments.missionId, uploadedById: missionAttachments.uploadedById, fileName: missionAttachments.fileName, mimeType: missionAttachments.mimeType, url: missionAttachments.url, sizeBytes: missionAttachments.sizeBytes, createdAt: missionAttachments.createdAt, uploaderName: users.name, uploaderEmail: users.email })
+    .from(missionAttachments)
+    .innerJoin(users, eq(missionAttachments.uploadedById, users.id))
+    .where(eq(missionAttachments.missionId, missionId))
+    .orderBy(desc(missionAttachments.createdAt), desc(missionAttachments.id));
+}
+
+async function notifyPendingApproval(missionId: number, approvalId: number, recipientId: number | null, missionKey: string, type: string, summary: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Mission storage is unavailable. Configure the project database and try again.");
+  const title = `NEXUS approval pending: ${missionKey}`;
+  const content = `${type}: ${summary}`;
+  await db.insert(missionNotifications).values({ missionId, approvalId, recipientId, title, content, status: "queued" });
+  const inserted = await db.select().from(missionNotifications).where(and(eq(missionNotifications.missionId, missionId), eq(missionNotifications.approvalId, approvalId))).orderBy(desc(missionNotifications.id)).limit(1);
+  const notification = inserted[0];
+  if (!notification) return;
+  const delivered = await notifyOwner({ title, content });
+  await db.update(missionNotifications).set({ status: delivered ? "sent" : "failed", deliveredAt: new Date() }).where(eq(missionNotifications.id, notification.id));
+}
+
+export async function listMissionNotifications(actor: Actor, missionId?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Mission storage is unavailable. Configure the project database and try again.");
+  const assignedMissionIds = await getAccessibleMissionIds(actor.id);
+  const actorMissionScope = accessCondition(actor, assignedMissionIds);
+  const scope = missionId ? and(eq(missionNotifications.missionId, missionId), actorMissionScope) : actorMissionScope;
+  return db
+    .select({ id: missionNotifications.id, missionId: missionNotifications.missionId, approvalId: missionNotifications.approvalId, recipientId: missionNotifications.recipientId, title: missionNotifications.title, content: missionNotifications.content, status: missionNotifications.status, createdAt: missionNotifications.createdAt, deliveredAt: missionNotifications.deliveredAt })
+    .from(missionNotifications)
+    .innerJoin(missions, eq(missionNotifications.missionId, missions.id))
+    .where(scope)
+    .orderBy(desc(missionNotifications.createdAt), desc(missionNotifications.id));
 }

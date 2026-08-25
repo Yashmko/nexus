@@ -35,4 +35,16 @@ describe("missions router", () => {
     const caller = appRouter.createCaller(context("user"));
     await expect(caller.missions.users()).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
+
+  it("rejects mission activity and attachment access without an authenticated user", async () => {
+    const caller = appRouter.createCaller(context(null));
+    await expect(caller.missions.activity({ missionId: 1 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller.missions.attachments({ missionId: 1 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("rejects evidence uploads and notification retrieval without an authenticated user", async () => {
+    const caller = appRouter.createCaller(context(null));
+    await expect(caller.missions.attachEvidence({ missionId: 1, fileName: "evidence.txt", mimeType: "text/plain", contentBase64: "dGVzdA==" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller.missions.notifications()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
 });

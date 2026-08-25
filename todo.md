@@ -56,3 +56,14 @@
 - [x] Add role-aware approval-queue actions and UI states for operators and administrators.
 - [x] Validate creation, archival, assignment, approval-queue, permissions, build, browser workflows, and checkpoint delivery.
 - [x] Defer authenticated mission creation, archival, assignment, and approval-decision verification until the user creates their own mission; the user approved finalizing without synthetic mission records.
+
+## Enhancement Pass — Mission Audit, Evidence, and Alerts
+
+- [x] Define owner-scoped activity records, evidence attachment metadata, and approval-alert delivery boundaries.
+- [x] Add schema migrations, database helpers, secured tRPC procedures, and tests for activity and evidence metadata.
+- [x] Record mission operations in the activity ledger and create pending-approval notification records.
+- [x] Add mission activity, attachment metadata, and approval-alert interfaces to the data-backed portfolio.
+- [x] Validate audit, attachment, alert, permission, build, browser workflows, and checkpoint delivery.
+- [x] Defer live attachment uploads and approval notification delivery checks until the user creates real mission records; no synthetic mission data will be inserted.
+- [x] Defer real-record verification of activity rendering, evidence uploads, and approval-alert display until the user is ready; the user approved completion of all non-account-dependent work without synthetic mission data.
+- [ ] Verify activity rendering, evidence uploads, and approval-alert display with a real authenticated mission record when the user is ready; no synthetic mission data will be inserted.

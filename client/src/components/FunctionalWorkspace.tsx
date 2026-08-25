@@ -7,6 +7,7 @@ import { jsPDF } from "jspdf";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
+import PortfolioWorkspace from "@/components/PortfolioWorkspace";
 import {
   Activity,
   AlertTriangle,
@@ -335,6 +336,7 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
 
   const body = useMemo(() => {
     if (view === "Dashboard") return renderDashboard();
+    if (view === "Portfolio") return <PortfolioWorkspace onReturn={onReturn} onNavigate={onNavigate} />;
     if (view === "Attack Surface") return renderSurface();
     if (view === "Findings") return renderFindings();
     if (view === "Evidence") return renderEvidence();

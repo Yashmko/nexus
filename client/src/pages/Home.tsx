@@ -22,6 +22,7 @@ import {
   FileText,
   FlaskConical,
   GitBranch,
+  Globe2,
   LayoutDashboard,
   Menu,
   Network,
@@ -40,6 +41,7 @@ import FunctionalWorkspace from "@/components/FunctionalWorkspace";
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard },
+  { label: "Portfolio", icon: Globe2 },
   { label: "Missions", icon: Radar },
   { label: "Attack Surface", icon: Network },
   { label: "Findings", icon: AlertTriangle },
@@ -160,6 +162,11 @@ export default function Home() {
         changeWorkspace(keyboardNavigate[event.key]);
         return;
       }
+      if (event.altKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        changeWorkspace("Portfolio");
+        return;
+      }
       if (event.key === " ") {
         event.preventDefault();
         setIsPlaying((value) => !value);
@@ -176,7 +183,7 @@ export default function Home() {
         setWorkspaceStatus("Advanced to the next mission stage.");
       }
       if (event.key === "?") {
-        setWorkspaceStatus("Shortcuts: Space play/pause · ←/→ step timeline · Alt+1–0 switch workspaces.");
+        setWorkspaceStatus("Shortcuts: Space play/pause · ←/→ step timeline · Alt+1–0 switch workspaces · Alt+P portfolio.");
       }
     };
     window.addEventListener("keydown", onKeyDown);

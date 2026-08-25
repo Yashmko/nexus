@@ -40,3 +40,10 @@
 - [x] Add interactive asset search, category filters, risk filtering, and a richer topology canvas.
 - [x] Add a detailed asset inspector with services, exposures, evidence provenance, and links to Findings and Evidence.
 - [x] Validate the upgraded Attack Surface workspace with build checks, browser interaction testing, and a checkpoint.
+
+## Enhancement Pass — Multi-Mission Portfolio
+
+- [x] Define a portfolio ledger that communicates mission posture, authorization, risk, evidence, and owner context.
+- [x] Add a portfolio workspace with mission search plus risk and status filters.
+- [x] Add mission selection, detailed case context, and navigation into the active mission workspace.
+- [x] Validate the multi-mission portfolio interactions, build, browser workflow, and checkpoint.

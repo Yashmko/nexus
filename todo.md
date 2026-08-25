@@ -32,7 +32,7 @@
 - [x] Validate the report-history and ownership features with tests, build checks, browser verification, and a final checkpoint.
 - [x] Add an explicit authenticated report-owner procedure tied to the active report record.
 - [x] Extend browser validation to cover Reports ownership and history states, then save the final checkpoint.
-- [ ] Verify saved-version selection, comparison, and owner detail with a real authenticated report record; no synthetic security reports will be created for this check.
+- [x] Defer saved-version selection, comparison, and owner-detail verification until real authenticated report records are available; the user approved completion without synthetic report data.
 
 ## Enhancement Pass — Attack Surface Map
 

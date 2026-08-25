@@ -4,6 +4,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { startLogin } from "@/const";
 import {
   Activity,
   AlertTriangle,
@@ -211,10 +212,10 @@ export default function Home() {
           <img src="/manus-storage/nexus-agent-silhouette_7e5a7e89.png" alt="Abstract NEXUS operator profile" />
           <div className="operator-copy">
             <span className="eyebrow">NEXUS Operator</span>
-            <span>Operator</span>
-            <span className="online-dot">Online</span>
+            <span>{isAuthenticated ? user?.name ?? user?.email ?? "Authenticated operator" : "Local operator"}</span>
+            <span className={isAuthenticated ? "online-dot" : "session-dot"}>{loading ? "Checking session" : isAuthenticated ? "Workspace connected" : "Local session"}</span>
           </div>
-          <span className="operator-version">v2.3.1</span>
+          {isAuthenticated ? <button className="operator-session-action" onClick={() => void logout()}>Sign out</button> : <button className="operator-session-action" onClick={startLogin}>Sign in</button>}
         </div>
       </aside>
 

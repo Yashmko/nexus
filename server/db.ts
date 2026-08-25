@@ -82,3 +82,31 @@ export async function getLatestReportRecord(ownerId: number, missionId: string) 
     .limit(1);
   return result[0] ?? null;
 }
+
+export async function getReportHistory(ownerId: number, missionId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Report storage is unavailable. Configure the project database and try again.");
+  return db
+    .select()
+    .from(reportRecords)
+    .where(and(eq(reportRecords.ownerId, ownerId), eq(reportRecords.missionId, missionId)))
+    .orderBy(desc(reportRecords.updatedAt), desc(reportRecords.id));
+}
+
+export async function getReportOwner(ownerId: number, reportId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Report storage is unavailable. Configure the project database and try again.");
+  const result = await db
+    .select({
+      reportId: reportRecords.id,
+      ownerId: users.id,
+      name: users.name,
+      email: users.email,
+      role: users.role,
+    })
+    .from(reportRecords)
+    .innerJoin(users, eq(reportRecords.ownerId, users.id))
+    .where(and(eq(reportRecords.id, reportId), eq(reportRecords.ownerId, ownerId)))
+    .limit(1);
+  return result[0] ?? null;
+}

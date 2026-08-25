@@ -18,4 +18,18 @@ describe("reports router", () => {
       code: "UNAUTHORIZED",
     });
   });
+
+  it("rejects report history retrieval without an authenticated workspace user", async () => {
+    const caller = appRouter.createCaller(unauthenticatedContext());
+    await expect(caller.reports.history({ missionId: "MIS-2025-05-21-1437" })).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+  });
+
+  it("rejects report-owner retrieval without an authenticated workspace user", async () => {
+    const caller = appRouter.createCaller(unauthenticatedContext());
+    await expect(caller.reports.owner({ reportId: 1 })).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+  });
 });

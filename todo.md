@@ -22,3 +22,21 @@
 - [x] Upgrade the project for backend and database support, then store and retrieve report records.
 - [x] Connect Reports workspace state to the persisted report record while retaining direct local exports.
 - [x] Validate persistence, keyboard behavior, report records, type checks, build, and checkpoint delivery.
+
+## Enhancement Pass — Report History and Ownership
+
+- [x] Define report-history and ownership behaviors that retain scope and evidence provenance.
+- [x] Add authenticated backend queries for report history and the current report owner.
+- [x] Add report version history, record selection, and comparison states to the Reports workspace.
+- [x] Add visible authenticated session status and report owner controls to the NEXUS interface.
+- [x] Validate the report-history and ownership features with tests, build checks, browser verification, and a final checkpoint.
+- [x] Add an explicit authenticated report-owner procedure tied to the active report record.
+- [x] Extend browser validation to cover Reports ownership and history states, then save the final checkpoint.
+- [ ] Verify saved-version selection, comparison, and owner detail with a real authenticated report record; no synthetic security reports will be created for this check.
+
+## Enhancement Pass — Attack Surface Map
+
+- [x] Define the upgraded topology entities, risk categories, and linked evidence states.
+- [x] Add interactive asset search, category filters, risk filtering, and a richer topology canvas.
+- [x] Add a detailed asset inspector with services, exposures, evidence provenance, and links to Findings and Evidence.
+- [x] Validate the upgraded Attack Surface workspace with build checks, browser interaction testing, and a checkpoint.

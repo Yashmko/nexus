@@ -40,7 +40,13 @@ try {
   await page.keyboard.press("Alt+2");
   await page.getByRole("heading", { name: "Mission timeline replay" }).waitFor();
 
-  console.log(JSON.stringify({ persistence: "passed", keyboardShortcuts: "passed" }));
+  await page.getByRole("button", { name: "Reports", exact: true }).click();
+  await page.getByRole("heading", { name: "Report record" }).waitFor();
+  await page.getByText("Version history", { exact: true }).waitFor();
+  await page.getByText("Sign in to view and create owner-scoped report versions.", { exact: true }).waitFor();
+  await page.getByText("Sign-in required", { exact: true }).waitFor();
+
+  console.log(JSON.stringify({ persistence: "passed", keyboardShortcuts: "passed", reportOwnershipGate: "passed" }));
 } finally {
   await browser.close();
 }

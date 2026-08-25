@@ -1,7 +1,7 @@
 /** NEXUS tRPC contract for authenticated report-record persistence. */
 import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
-import { getLatestReportRecord, saveReportRecord } from "./db";
+import { getLatestReportRecord, getReportHistory, getReportOwner, saveReportRecord } from "./db";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
@@ -28,6 +28,8 @@ export const appRouter = router({
   }),
   reports: router({
     latest: protectedProcedure.input(z.object({ missionId: z.string().min(1).max(128) })).query(({ ctx, input }) => getLatestReportRecord(ctx.user.id, input.missionId)),
+    history: protectedProcedure.input(z.object({ missionId: z.string().min(1).max(128) })).query(({ ctx, input }) => getReportHistory(ctx.user.id, input.missionId)),
+    owner: protectedProcedure.input(z.object({ reportId: z.number().int().positive() })).query(({ ctx, input }) => getReportOwner(ctx.user.id, input.reportId)),
     save: protectedProcedure.input(reportInput).mutation(({ ctx, input }) => saveReportRecord(ctx.user.id, input)),
   }),
 });

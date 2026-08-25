@@ -18,10 +18,12 @@ import {
   ChevronRight,
   CircleCheck,
   CircleX,
+  Clock3,
   Download,
   FileText,
   Filter,
   Gauge,
+  GitCompareArrows,
   Globe2,
   Network,
   Play,
@@ -66,6 +68,16 @@ const tools = [
   { name: "HTTPX", category: "Recon", status: "Available", version: "1.6.3", check: "Checked 6m ago" },
   { name: "BBOT", category: "Recon", status: "Available", version: "2.0.0", check: "Checked 8m ago" },
   { name: "FFUF", category: "Web", status: "Degraded", version: "2.1.0", check: "Checked 12m ago" },
+];
+
+const surfaceAssets = [
+  { id: "acme.internal", label: "acme.internal", kind: "Domain", risk: "Info", confidence: "100%", source: "ScopeGuard", exposure: "Authorized root", service: "DNS / internal zone", evidence: "EVD-2103", relation: "Mission root", x: "46%", y: "14%", finding: null },
+  { id: "api.acme.internal", label: "api.acme.internal", kind: "Application", risk: "High", confidence: "95%", source: "ReconAgent", exposure: "Internet-facing API", service: "HTTPS :443 · IIS 10", evidence: "EVD-2161", relation: "Route /upload", x: "24%", y: "43%", finding: "FND-042" },
+  { id: "vpn.acme.internal", label: "vpn.acme.internal", kind: "Gateway", risk: "Medium", confidence: "92%", source: "ReconAgent", exposure: "Remote access gateway", service: "SSL VPN :443", evidence: "EVD-2114", relation: "Identity boundary", x: "73%", y: "34%", finding: null },
+  { id: "mail.acme.internal", label: "mail.acme.internal", kind: "Application", risk: "Low", confidence: "88%", source: "SurfaceAgent", exposure: "Internal messaging", service: "SMTP :25 · IMAPS :993", evidence: "EVD-2120", relation: "Service host", x: "76%", y: "66%", finding: null },
+  { id: "dev.acme.internal", label: "dev.acme.internal", kind: "Application", risk: "Medium", confidence: "90%", source: "SurfaceAgent", exposure: "Development environment", service: "HTTPS :8443 · Git", evidence: "EVD-2131", relation: "Deployment path", x: "51%", y: "75%", finding: "FND-025" },
+  { id: "10.10.20.15", label: "10.10.20.15", kind: "Host", risk: "High", confidence: "94%", source: "ReconAgent", exposure: "Windows application host", service: "WinRM :5985 · SMB :445", evidence: "EVD-2147", relation: "API backing host", x: "28%", y: "78%", finding: "FND-037" },
+  { id: "POST /upload", label: "POST /upload", kind: "Route", risk: "Critical", confidence: "91%", source: "ValidatorAgent", exposure: "Writable web route", service: "POST /upload · write path", evidence: "EVD-2162", relation: "API attack path", x: "18%", y: "60%", finding: "FND-042" },
 ];
 
 const PREFS_STORAGE_KEY = "nexus-forensic-frontend.preferences.v1";
@@ -115,7 +127,7 @@ function EmptyExecutionNotice() {
 }
 
 export default function FunctionalWorkspace({ view, onReturn, onNavigate }: WorkspaceProps) {
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated, loading: authLoading, logout } = useAuth();
   const reportUtils = trpc.useUtils();
   const [savedRegisters] = useState(loadRegisters);
   const [selectedFindingId, setSelectedFindingId] = useState("FND-042");
@@ -130,10 +142,19 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
   const [terminalEntries, setTerminalEntries] = useState<string[]>(["NEXUS frontend console", "Execution engine: disconnected", "Use this console to prepare a command for the backend integration."]);
   const [reportFormat, setReportFormat] = useState<"Markdown" | "JSON" | "PDF">("Markdown");
   const [reportNotice, setReportNotice] = useState<string | null>(null);
+  const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
+  const [comparisonReportId, setComparisonReportId] = useState<number | null>(null);
   const [settings, setSettings] = useState(loadPreferences);
   const [surfaceAsset, setSurfaceAsset] = useState("api.acme.internal");
+  const [surfaceQuery, setSurfaceQuery] = useState("");
+  const [surfaceKind, setSurfaceKind] = useState("All");
+  const [surfaceRisk, setSurfaceRisk] = useState("All");
 
   const reportQuery = trpc.reports.latest.useQuery(
+    { missionId: "MIS-2025-05-21-1437" },
+    { enabled: view === "Reports" && isAuthenticated, retry: false },
+  );
+  const reportHistoryQuery = trpc.reports.history.useQuery(
     { missionId: "MIS-2025-05-21-1437" },
     { enabled: view === "Reports" && isAuthenticated, retry: false },
   );
@@ -153,14 +174,36 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
   });
   const currentEvidence = evidence.find((item) => item.id === selectedEvidence) ?? evidence[0];
   const currentAgent = agents.find((agent) => agent.name === selectedAgent) ?? agents[0];
+  const filteredSurfaceAssets = surfaceAssets.filter((asset) => {
+    const query = surfaceQuery.trim().toLowerCase();
+    const matchesQuery = !query || [asset.label, asset.kind, asset.risk, asset.service, asset.exposure, asset.evidence].join(" ").toLowerCase().includes(query);
+    const matchesKind = surfaceKind === "All" || asset.kind === surfaceKind;
+    const matchesRisk = surfaceRisk === "All" || asset.risk === surfaceRisk;
+    return matchesQuery && matchesKind && matchesRisk;
+  });
+  const selectedSurfaceAsset = surfaceAssets.find((asset) => asset.id === surfaceAsset) ?? surfaceAssets[0];
+  const reportHistory = reportHistoryQuery.data ?? [];
   const storedReport = reportQuery.data;
-  const reportTitle = storedReport?.title ?? "ACME Internal Network Assessment";
-  const reportScope = storedReport?.scope ?? "10.10.0.0/16 and acme.internal";
-  const reportSummary = storedReport?.summary ?? "One finding has sufficient evidence for review. One competing path was rejected. All displayed actions are confined to the recorded scope.";
+  const selectedStoredReport = reportHistory.find((record) => record.id === selectedReportId) ?? storedReport;
+  const comparisonReport = reportHistory.find((record) => record.id === comparisonReportId) ?? null;
+  const displayedReport = selectedStoredReport ?? storedReport;
+  const reportOwnerQuery = trpc.reports.owner.useQuery(
+    { reportId: displayedReport?.id ?? 0 },
+    { enabled: view === "Reports" && isAuthenticated && Boolean(displayedReport?.id), retry: false },
+  );
+  const reportOwner = reportOwnerQuery.data;
+  const reportTitle = displayedReport?.title ?? "ACME Internal Network Assessment";
+  const reportScope = displayedReport?.scope ?? "10.10.0.0/16 and acme.internal";
+  const reportSummary = displayedReport?.summary ?? "One finding has sufficient evidence for review. One competing path was rejected. All displayed actions are confined to the recorded scope.";
 
   const saveReportMutation = trpc.reports.save.useMutation({
-    onSuccess: async () => {
-      await reportUtils.reports.latest.invalidate({ missionId: "MIS-2025-05-21-1437" });
+    onSuccess: async (record) => {
+      setSelectedReportId(record?.id ?? null);
+      setComparisonReportId(null);
+      await Promise.all([
+        reportUtils.reports.latest.invalidate({ missionId: "MIS-2025-05-21-1437" }),
+        reportUtils.reports.history.invalidate({ missionId: "MIS-2025-05-21-1437" }),
+      ]);
       setReportNotice("Report record saved to your authenticated NEXUS workspace.");
     },
     onError: (error) => setReportNotice(error.message),
@@ -250,8 +293,9 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
   </>;
 
   const renderSurface = () => <>
-    <WorkspaceHeader title="Attack surface" kicker="Evidence-linked topology" icon={Network} onReturn={onReturn}><LedgerStamp tone="success">142 hosts catalogued</LedgerStamp><button className="workspace-action" onClick={() => setSurfaceAsset("api.acme.internal")}>Center selected asset</button></WorkspaceHeader>
-    <section className="surface-layout"><article className="topology-board"><div className="topology-note">Nodes originate from recorded discovery evidence. Select an asset to inspect its preserved context.</div><div className="topology-map"><span className="root-node">acme.internal</span>{["api.acme.internal", "vpn.acme.internal", "mail.acme.internal", "dev.acme.internal", "10.10.20.15", "443 / https", "IIS 10", "POST /upload"].map((asset, index) => <button key={asset} className={`topology-node node-${index} ${surfaceAsset === asset ? "selected" : ""}`} onClick={() => setSurfaceAsset(asset)}>{asset}</button>)}</div></article><aside className="asset-inspector"><span className="eyebrow">Selected asset</span><h2>{surfaceAsset}</h2><dl><div><dt>Source</dt><dd>ReconAgent</dd></div><div><dt>Confidence</dt><dd>95%</dd></div><div><dt>Evidence</dt><dd>EVD-2103</dd></div><div><dt>Relationship</dt><dd>Within scope</dd></div></dl><button className="workspace-action" onClick={() => onNavigate("Evidence")}>Open evidence <ChevronRight size={14} /></button></aside></section>
+    <WorkspaceHeader title="Attack surface" kicker="Evidence-linked topology" icon={Network} onReturn={onReturn}><label className="workspace-search"><Search size={14} /><input value={surfaceQuery} onChange={(event) => setSurfaceQuery(event.target.value)} placeholder="Search asset, service, evidence…" aria-label="Search attack surface" /></label><div className="filter-group surface-filters">{["All", "Application", "Host", "Route", "Gateway"].map((kind) => <button key={kind} onClick={() => setSurfaceKind(kind)} className={surfaceKind === kind ? "active" : ""}>{kind}</button>)}</div><button className="workspace-action" onClick={() => { setSurfaceQuery(""); setSurfaceKind("All"); setSurfaceRisk("All"); setSurfaceAsset("api.acme.internal"); }}>Reset view</button></WorkspaceHeader>
+    <section className="surface-summary-line"><span>{filteredSurfaceAssets.length} topology entities shown</span><div className="risk-filter-row">{["All", "Critical", "High", "Medium", "Low"].map((risk) => <button key={risk} className={`${surfaceRisk === risk ? "active" : ""} risk-${risk.toLowerCase()}`} onClick={() => setSurfaceRisk(risk)}>{risk}</button>)}</div></section>
+    <section className="surface-upgrade"><aside className="surface-ledger"><div className="section-label"><span>Surface ledger</span><small>Recorded discovery</small></div><div className="surface-metrics"><p><strong>{surfaceAssets.length}</strong><span>mapped entities</span></p><p><strong>{surfaceAssets.filter((asset) => ["Critical", "High"].includes(asset.risk)).length}</strong><span>priority paths</span></p></div><div className="surface-asset-list">{filteredSurfaceAssets.length ? filteredSurfaceAssets.map((asset) => <button key={asset.id} className={`surface-asset-row ${surfaceAsset === asset.id ? "selected" : ""}`} onClick={() => setSurfaceAsset(asset.id)}><span className={`asset-risk-dot risk-${asset.risk.toLowerCase()}`} /><div><strong>{asset.label}</strong><small>{asset.kind} · {asset.service}</small></div><LedgerStamp tone={asset.risk === "Critical" || asset.risk === "High" ? "danger" : asset.risk === "Medium" ? "warning" : "neutral"}>{asset.risk}</LedgerStamp></button>) : <p className="register-empty">No topology entity matches the active search and risk filters.</p>}</div></aside><article className="topology-board upgraded"><div className="topology-note"><span>Observed relationships</span><small>Selection opens preserved context; no live network query is performed in this frontend map.</small></div><div className="topology-map topology-map-upgraded"><i className="surface-link link-api" /><i className="surface-link link-vpn" /><i className="surface-link link-mail" /><i className="surface-link link-dev" /><i className="surface-link link-host" /><i className="surface-link link-route" />{filteredSurfaceAssets.map((asset) => <button key={asset.id} style={{ left: asset.x, top: asset.y }} className={`topology-node surface-node risk-${asset.risk.toLowerCase()} ${surfaceAsset === asset.id ? "selected" : ""}`} onClick={() => setSurfaceAsset(asset.id)}><span>{asset.kind.slice(0, 1)}</span><strong>{asset.label}</strong><small>{asset.risk}</small></button>)}<div className="surface-legend"><span><i className="risk-critical" /> Critical</span><span><i className="risk-high" /> High</span><span><i className="risk-medium" /> Medium</span><span><i className="risk-low" /> Low / info</span></div></div></article><aside className="asset-inspector surface-inspector"><div className="record-title"><div><span className="eyebrow">Selected asset</span><h2>{selectedSurfaceAsset.label}</h2></div><LedgerStamp tone={selectedSurfaceAsset.risk === "Critical" || selectedSurfaceAsset.risk === "High" ? "danger" : selectedSurfaceAsset.risk === "Medium" ? "warning" : "neutral"}>{selectedSurfaceAsset.risk}</LedgerStamp></div><p className="asset-exposure">{selectedSurfaceAsset.exposure}</p><dl><div><dt>Asset type</dt><dd>{selectedSurfaceAsset.kind}</dd></div><div><dt>Observed service</dt><dd>{selectedSurfaceAsset.service}</dd></div><div><dt>Confidence</dt><dd>{selectedSurfaceAsset.confidence}</dd></div><div><dt>Discovery source</dt><dd>{selectedSurfaceAsset.source}</dd></div><div><dt>Evidence provenance</dt><dd>{selectedSurfaceAsset.evidence}</dd></div><div><dt>Relationship</dt><dd>{selectedSurfaceAsset.relation}</dd></div></dl><div className="asset-path-note"><span>Risk rationale</span><p>{selectedSurfaceAsset.risk === "Critical" || selectedSurfaceAsset.risk === "High" ? "This entity intersects an evidence-backed priority path and should be reviewed alongside its linked custody record." : "This entity remains recorded for context; risk is derived from the displayed mission evidence."}</p></div><div className="asset-actions"><button className="workspace-action" onClick={() => onNavigate("Evidence")}>Open evidence <ChevronRight size={14} /></button>{selectedSurfaceAsset.finding && <button className="workspace-action subtle" onClick={() => onNavigate("Findings")}>Review {selectedSurfaceAsset.finding} <ChevronRight size={14} /></button>}</div></aside></section>
   </>;
 
   const renderFindings = () => <>
@@ -281,7 +325,7 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
 
   const renderReports = () => <>
     <WorkspaceHeader title="Report record" kicker="Exportable mission summary" icon={FileText} onReturn={onReturn}><div className="format-switch"><button className={reportFormat === "Markdown" ? "active" : ""} onClick={() => setReportFormat("Markdown")}>Markdown</button><button className={reportFormat === "JSON" ? "active" : ""} onClick={() => setReportFormat("JSON")}>JSON</button><button className={reportFormat === "PDF" ? "active" : ""} onClick={() => setReportFormat("PDF")}>PDF</button></div><button className="workspace-action" onClick={exportReport}><Download size={14} /> Export {reportFormat}</button></WorkspaceHeader>
-    <section className="report-layout">{reportNotice && <div className="report-notice"><CircleCheck size={14} /> {reportNotice}</div>}<article className="report-preview"><span className="eyebrow">NEXUS / Mission record</span><h2>{reportTitle}</h2><div className="report-sync-line"><LedgerStamp tone={storedReport ? "success" : "warning"}>{reportQuery.isFetching ? "Loading report record" : storedReport ? `Saved record #${storedReport.id}` : "Local draft only"}</LedgerStamp>{storedReport?.updatedAt && <span>Last synced {new Date(storedReport.updatedAt).toLocaleString()}</span>}</div><div className="report-section"><strong>Executive status</strong><p>{reportSummary}</p></div><div className="report-section"><strong>Scope</strong><p>{reportScope}</p></div><div className="report-section"><strong>Finding</strong><p>{selectedFinding.title} · {selectedFinding.state} · {selectedFinding.confidence} confidence</p></div><div className="report-section"><strong>Evidence</strong><p>{evidence.length} preserved artifacts with intact custody records.</p></div></article><aside className="report-side"><span className="eyebrow">Report storage</span><h2>{isAuthenticated ? storedReport ? "Synced" : "Unsaved" : "Sign-in required"}</h2><p>{isAuthenticated ? "Save the visible report state to your authenticated NEXUS workspace, then continue using direct local exports." : "Local exports remain available. Sign in to save the report record to your NEXUS workspace."}</p><button className="workspace-action" onClick={saveReportRecord} disabled={saveReportMutation.isPending}>{saveReportMutation.isPending ? "Saving record…" : isAuthenticated ? "Save report record" : "Sign in to save"}</button><span className="eyebrow report-export-label">Export preview</span><p>{reportFormat === "PDF" ? "Creates a styled, downloadable PDF record directly in the browser." : "The download is generated locally from the visible report record."}</p><button className="workspace-action" onClick={exportReport}><Download size={14} /> Export {reportFormat}</button></aside></section>
+    <section className="report-layout">{reportNotice && <div className="report-notice"><CircleCheck size={14} /> {reportNotice}</div>}<aside className="report-history-panel"><div className="section-label"><span><Clock3 size={13} /> Version history</span><small>{isAuthenticated ? `${reportHistory.length} saved` : "Private"}</small></div>{!isAuthenticated ? <p className="history-empty">Sign in to view and create owner-scoped report versions.</p> : reportHistoryQuery.isFetching ? <p className="history-empty">Loading private report history…</p> : reportHistory.length ? reportHistory.map((record, index) => <button key={record.id} className={`report-history-item ${displayedReport?.id === record.id ? "selected" : ""}`} onClick={() => { setSelectedReportId(record.id); setComparisonReportId(null); }}><span>v{reportHistory.length - index}</span><strong>{record.status}</strong><small>{new Date(record.updatedAt).toLocaleString()}</small></button>) : <p className="history-empty">No saved versions yet. Save the current draft to establish the report ledger.</p>}{isAuthenticated && reportHistory.length > 1 && <button className="compare-toggle" onClick={() => setComparisonReportId((current) => current ? null : reportHistory.find((record) => record.id !== displayedReport?.id)?.id ?? null)}><GitCompareArrows size={14} /> {comparisonReport ? "Close comparison" : "Compare selected"}</button>}</aside><article className="report-preview"><span className="eyebrow">NEXUS / Mission record</span><h2>{reportTitle}</h2><div className="report-sync-line"><LedgerStamp tone={displayedReport ? "success" : "warning"}>{reportQuery.isFetching ? "Loading report record" : displayedReport ? `Saved record #${displayedReport.id}` : "Local draft only"}</LedgerStamp>{displayedReport?.updatedAt && <span>Last synced {new Date(displayedReport.updatedAt).toLocaleString()}</span>}</div>{comparisonReport && displayedReport && <div className="report-comparison"><div><span className="eyebrow">Comparison</span><h3>Selected report vs previous version</h3></div><p><strong>Current status</strong>{displayedReport.status}</p><p><strong>Compared status</strong>{comparisonReport.status}</p><p><strong>Scope</strong>{displayedReport.scope === comparisonReport.scope ? "Unchanged" : "Scope differs between saved versions"}</p><p><strong>Evidence snapshot</strong>{JSON.stringify(displayedReport.evidenceSnapshot) === JSON.stringify(comparisonReport.evidenceSnapshot) ? "Unchanged" : "Evidence snapshot differs between saved versions"}</p></div>}<div className="report-section"><strong>Executive status</strong><p>{reportSummary}</p></div><div className="report-section"><strong>Scope</strong><p>{reportScope}</p></div><div className="report-section"><strong>Finding</strong><p>{selectedFinding.title} · {displayedReport?.status ?? selectedFinding.state} · {selectedFinding.confidence} confidence</p></div><div className="report-section"><strong>Evidence</strong><p>{evidence.length} preserved artifacts with intact custody records.</p></div></article><aside className="report-side"><span className="eyebrow">Report ownership</span><h2>{authLoading ? "Checking session" : isAuthenticated ? "Private to you" : "Sign-in required"}</h2><p>{isAuthenticated ? `${reportOwner?.name ?? reportOwner?.email ?? user?.name ?? user?.email ?? "Authenticated operator"} owns and can view these report versions. Records are scoped to the signed-in workspace.` : "Local exports remain available. Sign in to save private report versions and inspect their history."}</p>{isAuthenticated && <div className="owner-control"><span>Role</span><strong>{reportOwner?.role ?? user?.role ?? "user"}</strong><button onClick={() => void logout()}>Sign out</button></div>}<button className="workspace-action" onClick={saveReportRecord} disabled={saveReportMutation.isPending}>{saveReportMutation.isPending ? "Saving version…" : isAuthenticated ? "Save new version" : "Sign in to save"}</button><span className="eyebrow report-export-label">Export preview</span><p>{reportFormat === "PDF" ? "Creates a styled, downloadable PDF record directly in the browser." : "The download is generated locally from the visible report record."}</p><button className="workspace-action" onClick={exportReport}><Download size={14} /> Export {reportFormat}</button></aside></section>
   </>;
 
   const renderSettings = () => <>
@@ -300,7 +344,7 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
     if (view === "Reports") return renderReports();
     if (view === "Settings") return renderSettings();
     return renderDashboard();
-  }, [view, isAuthenticated, storedReport, reportQuery.isFetching, saveReportMutation.isPending, selectedFindingId, findingFilter, findingQuery, selectedEvidence, evidenceQuery, evidenceKind, selectedAgent, toolRows, terminalCommand, terminalEntries, reportFormat, reportNotice, settings, surfaceAsset]);
+  }, [view, user, isAuthenticated, authLoading, storedReport, displayedReport, comparisonReport, reportHistory, reportHistoryQuery.isFetching, reportQuery.isFetching, saveReportMutation.isPending, selectedFindingId, selectedReportId, comparisonReportId, findingFilter, findingQuery, selectedEvidence, evidenceQuery, evidenceKind, selectedAgent, toolRows, terminalCommand, terminalEntries, reportFormat, reportNotice, settings, surfaceAsset, surfaceQuery, surfaceKind, surfaceRisk]);
 
   return <section className="functional-workspace">{body}</section>;
 }

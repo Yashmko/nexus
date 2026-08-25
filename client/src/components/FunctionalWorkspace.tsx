@@ -2,8 +2,11 @@
  * NEXUS design reminder: functional workspace screens follow the restrained Forensic Timeline
  * system—ledger-like metadata, no decorative dashboard clutter, and semantic color only for decisions.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { jsPDF } from "jspdf";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { startLogin } from "@/const";
+import { trpc } from "@/lib/trpc";
 import {
   Activity,
   AlertTriangle,
@@ -65,6 +68,36 @@ const tools = [
   { name: "FFUF", category: "Web", status: "Degraded", version: "2.1.0", check: "Checked 12m ago" },
 ];
 
+const PREFS_STORAGE_KEY = "nexus-forensic-frontend.preferences.v1";
+const REGISTERS_STORAGE_KEY = "nexus-forensic-frontend.registers.v1";
+
+type Preferences = {
+  compact: boolean;
+  prompts: boolean;
+  redaction: boolean;
+  provider: string;
+};
+
+function loadPreferences(): Preferences {
+  const fallback: Preferences = { compact: true, prompts: true, redaction: true, provider: "Ollama (local)" };
+  try {
+    const saved = window.localStorage.getItem(PREFS_STORAGE_KEY);
+    return saved ? { ...fallback, ...JSON.parse(saved) } : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function loadRegisters() {
+  const fallback = { findingFilter: "All", findingQuery: "", evidenceQuery: "", evidenceKind: "All" };
+  try {
+    const saved = window.localStorage.getItem(REGISTERS_STORAGE_KEY);
+    return saved ? { ...fallback, ...JSON.parse(saved) } : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function LedgerStamp({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "success" | "danger" | "warning" }) {
   return <span className={`ledger-stamp ${tone}`}>{children}</span>;
 }
@@ -82,20 +115,28 @@ function EmptyExecutionNotice() {
 }
 
 export default function FunctionalWorkspace({ view, onReturn, onNavigate }: WorkspaceProps) {
+  const { isAuthenticated } = useAuth();
+  const reportUtils = trpc.useUtils();
+  const [savedRegisters] = useState(loadRegisters);
   const [selectedFindingId, setSelectedFindingId] = useState("FND-042");
-  const [findingFilter, setFindingFilter] = useState("All");
-  const [findingQuery, setFindingQuery] = useState("");
+  const [findingFilter, setFindingFilter] = useState(savedRegisters.findingFilter);
+  const [findingQuery, setFindingQuery] = useState(savedRegisters.findingQuery);
   const [selectedEvidence, setSelectedEvidence] = useState("EVD-2161");
-  const [evidenceQuery, setEvidenceQuery] = useState("");
-  const [evidenceKind, setEvidenceKind] = useState("All");
+  const [evidenceQuery, setEvidenceQuery] = useState(savedRegisters.evidenceQuery);
+  const [evidenceKind, setEvidenceKind] = useState(savedRegisters.evidenceKind);
   const [selectedAgent, setSelectedAgent] = useState("CriticAgent");
   const [toolRows, setToolRows] = useState(tools);
   const [terminalCommand, setTerminalCommand] = useState("nexus scope show");
   const [terminalEntries, setTerminalEntries] = useState<string[]>(["NEXUS frontend console", "Execution engine: disconnected", "Use this console to prepare a command for the backend integration."]);
   const [reportFormat, setReportFormat] = useState<"Markdown" | "JSON" | "PDF">("Markdown");
   const [reportNotice, setReportNotice] = useState<string | null>(null);
-  const [settings, setSettings] = useState({ compact: true, prompts: true, redaction: true, provider: "Ollama (local)" });
+  const [settings, setSettings] = useState(loadPreferences);
   const [surfaceAsset, setSurfaceAsset] = useState("api.acme.internal");
+
+  const reportQuery = trpc.reports.latest.useQuery(
+    { missionId: "MIS-2025-05-21-1437" },
+    { enabled: view === "Reports" && isAuthenticated, retry: false },
+  );
 
   const selectedFinding = findings.find((finding) => finding.id === selectedFindingId) ?? findings[0];
   const filteredFindings = findings.filter((finding) => {
@@ -112,11 +153,31 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
   });
   const currentEvidence = evidence.find((item) => item.id === selectedEvidence) ?? evidence[0];
   const currentAgent = agents.find((agent) => agent.name === selectedAgent) ?? agents[0];
+  const storedReport = reportQuery.data;
+  const reportTitle = storedReport?.title ?? "ACME Internal Network Assessment";
+  const reportScope = storedReport?.scope ?? "10.10.0.0/16 and acme.internal";
+  const reportSummary = storedReport?.summary ?? "One finding has sufficient evidence for review. One competing path was rejected. All displayed actions are confined to the recorded scope.";
+
+  const saveReportMutation = trpc.reports.save.useMutation({
+    onSuccess: async () => {
+      await reportUtils.reports.latest.invalidate({ missionId: "MIS-2025-05-21-1437" });
+      setReportNotice("Report record saved to your authenticated NEXUS workspace.");
+    },
+    onError: (error) => setReportNotice(error.message),
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    window.localStorage.setItem(REGISTERS_STORAGE_KEY, JSON.stringify({ findingFilter, findingQuery, evidenceQuery, evidenceKind }));
+  }, [findingFilter, findingQuery, evidenceQuery, evidenceKind]);
 
   const exportReport = () => {
     const contents = reportFormat === "Markdown"
-      ? `# NEXUS Mission Record\n\n## Scope\n10.10.0.0/16, acme.internal\n\n## Finding\n${selectedFinding.title}\n\nState: ${selectedFinding.state}\nConfidence: ${selectedFinding.confidence}\n\n## Evidence\n${evidence.map((item) => `- ${item.id}: ${item.title}`).join("\n")}`
-      : JSON.stringify({ mission: "MIS-2025-05-21-1437", scope: ["10.10.0.0/16", "acme.internal"], finding: selectedFinding, evidence }, null, 2);
+      ? `# NEXUS Mission Record\n\n## Scope\n${reportScope}\n\n## Finding\n${selectedFinding.title}\n\nState: ${selectedFinding.state}\nConfidence: ${selectedFinding.confidence}\n\n## Evidence\n${evidence.map((item) => `- ${item.id}: ${item.title}`).join("\n")}`
+      : JSON.stringify({ mission: "MIS-2025-05-21-1437", scope: reportScope, finding: selectedFinding, evidence, storedReportId: storedReport?.id ?? null }, null, 2);
     if (reportFormat === "PDF") {
       const document = new jsPDF({ unit: "pt", format: "letter" });
       const margin = 48;
@@ -132,10 +193,10 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
       document.setFillColor(9, 13, 14);
       document.rect(0, 0, 612, 792, "F");
       addLine("NEXUS / MISSION RECORD", 17, [218, 232, 225]);
-      addLine("ACME Internal Network Assessment", 12, [141, 164, 181]);
+      addLine(reportTitle, 12, [141, 164, 181]);
       y += 8;
       addLine("SCOPE", 10, [165, 197, 143]);
-      addLine("10.10.0.0/16, acme.internal");
+      addLine(reportScope);
       addLine("FINDING", 10, [165, 197, 143]);
       addLine(`${selectedFinding.id} — ${selectedFinding.title}`);
       addLine(`State: ${selectedFinding.state} | Confidence: ${selectedFinding.confidence}`);
@@ -154,6 +215,23 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
     anchor.click();
     URL.revokeObjectURL(url);
     setReportNotice(`${reportFormat} report exported to your device.`);
+  };
+
+  const saveReportRecord = () => {
+    if (!isAuthenticated) {
+      setReportNotice("Sign in to save this report record to your NEXUS workspace.");
+      startLogin();
+      return;
+    }
+    saveReportMutation.mutate({
+      missionId: "MIS-2025-05-21-1437",
+      title: "ACME Internal Network Assessment",
+      scope: "10.10.0.0/16 and acme.internal",
+      status: selectedFinding.state,
+      summary: "One finding has sufficient evidence for review. One competing path was rejected. All displayed actions are confined to the recorded scope.",
+      findingSnapshot: selectedFinding,
+      evidenceSnapshot: evidence,
+    });
   };
 
   const renderDashboard = () => <>
@@ -203,11 +281,11 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
 
   const renderReports = () => <>
     <WorkspaceHeader title="Report record" kicker="Exportable mission summary" icon={FileText} onReturn={onReturn}><div className="format-switch"><button className={reportFormat === "Markdown" ? "active" : ""} onClick={() => setReportFormat("Markdown")}>Markdown</button><button className={reportFormat === "JSON" ? "active" : ""} onClick={() => setReportFormat("JSON")}>JSON</button><button className={reportFormat === "PDF" ? "active" : ""} onClick={() => setReportFormat("PDF")}>PDF</button></div><button className="workspace-action" onClick={exportReport}><Download size={14} /> Export {reportFormat}</button></WorkspaceHeader>
-    <section className="report-layout">{reportNotice && <div className="report-notice"><CircleCheck size={14} /> {reportNotice}</div>}<article className="report-preview"><span className="eyebrow">NEXUS / Mission record</span><h2>ACME Internal Network Assessment</h2><div className="report-section"><strong>Executive status</strong><p>One finding has sufficient evidence for review. One competing path was rejected. All displayed actions are confined to the recorded scope.</p></div><div className="report-section"><strong>Scope</strong><p>10.10.0.0/16 and acme.internal</p></div><div className="report-section"><strong>Finding</strong><p>{selectedFinding.title} · {selectedFinding.state} · {selectedFinding.confidence} confidence</p></div><div className="report-section"><strong>Evidence</strong><p>{evidence.length} preserved artifacts with intact custody records.</p></div></article><aside className="report-side"><span className="eyebrow">Export preview</span><h2>{reportFormat}</h2><p>{reportFormat === "PDF" ? "Creates a styled, downloadable PDF record directly in the browser." : "The download is generated locally from the current frontend record."}</p><button className="workspace-action" onClick={exportReport}><Download size={14} /> Export {reportFormat}</button></aside></section>
+    <section className="report-layout">{reportNotice && <div className="report-notice"><CircleCheck size={14} /> {reportNotice}</div>}<article className="report-preview"><span className="eyebrow">NEXUS / Mission record</span><h2>{reportTitle}</h2><div className="report-sync-line"><LedgerStamp tone={storedReport ? "success" : "warning"}>{reportQuery.isFetching ? "Loading report record" : storedReport ? `Saved record #${storedReport.id}` : "Local draft only"}</LedgerStamp>{storedReport?.updatedAt && <span>Last synced {new Date(storedReport.updatedAt).toLocaleString()}</span>}</div><div className="report-section"><strong>Executive status</strong><p>{reportSummary}</p></div><div className="report-section"><strong>Scope</strong><p>{reportScope}</p></div><div className="report-section"><strong>Finding</strong><p>{selectedFinding.title} · {selectedFinding.state} · {selectedFinding.confidence} confidence</p></div><div className="report-section"><strong>Evidence</strong><p>{evidence.length} preserved artifacts with intact custody records.</p></div></article><aside className="report-side"><span className="eyebrow">Report storage</span><h2>{isAuthenticated ? storedReport ? "Synced" : "Unsaved" : "Sign-in required"}</h2><p>{isAuthenticated ? "Save the visible report state to your authenticated NEXUS workspace, then continue using direct local exports." : "Local exports remain available. Sign in to save the report record to your NEXUS workspace."}</p><button className="workspace-action" onClick={saveReportRecord} disabled={saveReportMutation.isPending}>{saveReportMutation.isPending ? "Saving record…" : isAuthenticated ? "Save report record" : "Sign in to save"}</button><span className="eyebrow report-export-label">Export preview</span><p>{reportFormat === "PDF" ? "Creates a styled, downloadable PDF record directly in the browser." : "The download is generated locally from the visible report record."}</p><button className="workspace-action" onClick={exportReport}><Download size={14} /> Export {reportFormat}</button></aside></section>
   </>;
 
   const renderSettings = () => <>
-    <WorkspaceHeader title="Mission settings" kicker="Frontend preferences" icon={Settings2} onReturn={onReturn}><LedgerStamp tone="neutral">Saved locally in this session</LedgerStamp></WorkspaceHeader>
+    <WorkspaceHeader title="Mission settings" kicker="Frontend preferences" icon={Settings2} onReturn={onReturn}><LedgerStamp tone="success">Saved in this browser</LedgerStamp></WorkspaceHeader>
     <section className="settings-layout"><article className="settings-section"><h2>Operator preferences</h2>{([ ["compact", "Compact evidence ledger", "Keeps dense technical metadata visible."], ["prompts", "Approval prompts", "Requires an explicit operator decision in the interface."], ["redaction", "Secret redaction preview", "Masks credential-like values in visible evidence."] ] as const).map(([key, title, description]) => <label className="setting-toggle" key={key}><div><strong>{title}</strong><small>{description}</small></div><input type="checkbox" checked={settings[key]} onChange={() => setSettings((state) => ({ ...state, [key]: !state[key] }))} /><span /></label>)}</article><article className="settings-section"><h2>AI provider display</h2><p>The interface does not make provider requests in this frontend build.</p><div className="provider-list">{["Ollama (local)", "OpenAI", "Anthropic", "Gemini"].map((provider) => <button key={provider} className={settings.provider === provider ? "selected" : ""} onClick={() => setSettings((state) => ({ ...state, provider }))}>{settings.provider === provider && <Check size={14} />}{provider}</button>)}</div></article></section>
   </>;
 
@@ -222,7 +300,7 @@ export default function FunctionalWorkspace({ view, onReturn, onNavigate }: Work
     if (view === "Reports") return renderReports();
     if (view === "Settings") return renderSettings();
     return renderDashboard();
-  }, [view, selectedFindingId, findingFilter, findingQuery, selectedEvidence, evidenceQuery, evidenceKind, selectedAgent, toolRows, terminalCommand, terminalEntries, reportFormat, reportNotice, settings, surfaceAsset]);
+  }, [view, isAuthenticated, storedReport, reportQuery.isFetching, saveReportMutation.isPending, selectedFindingId, findingFilter, findingQuery, selectedEvidence, evidenceQuery, evidenceKind, selectedAgent, toolRows, terminalCommand, terminalEntries, reportFormat, reportNotice, settings, surfaceAsset]);
 
   return <section className="functional-workspace">{body}</section>;
 }

@@ -3,6 +3,7 @@
  * scope, evidence, and approval are visible without neon decoration or dashboard noise.
  */
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
 import {
   Activity,
   AlertTriangle,
@@ -90,6 +91,13 @@ function StatusPill({ children, tone = "neutral" }: { children: React.ReactNode;
 }
 
 export default function Home() {
+  // The useAuth hook provides authentication state.
+  // To implement login/logout, call logout(), or start login from an event
+  // handler: onClick={() => startLogin()} (imported from "@/const"). Never call
+  // startLogin() during render (no href={startLogin()}) — it mints a one-time
+  // nonce cookie and must run only at the moment of navigation.
+  let { user, loading, error, isAuthenticated, logout } = useAuth();
+
   const [activeNav, setActiveNav] = useState("Missions");
   const [selectedStage, setSelectedStage] = useState(6);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -129,6 +137,50 @@ export default function Home() {
     setActiveNav(workspace);
     setWorkspaceStatus(workspace === "Missions" ? "Mission timeline restored. Replay position remains preserved." : `${workspace} workspace opened. Context is linked to the current mission.`);
   };
+
+  useEffect(() => {
+    const keyboardNavigate: Record<string, string> = {
+      "1": "Dashboard",
+      "2": "Missions",
+      "3": "Attack Surface",
+      "4": "Findings",
+      "5": "Evidence",
+      "6": "Agents",
+      "7": "Tools",
+      "8": "Terminal",
+      "9": "Reports",
+      "0": "Settings",
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
+      if (event.altKey && keyboardNavigate[event.key]) {
+        event.preventDefault();
+        changeWorkspace(keyboardNavigate[event.key]);
+        return;
+      }
+      if (event.key === " ") {
+        event.preventDefault();
+        setIsPlaying((value) => !value);
+        setWorkspaceStatus(isPlaying ? "Replay paused at the current decision record." : "Timeline replay started. Each stage advances in sequence.");
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        stepTimeline(-1);
+        setWorkspaceStatus("Replayed the previous mission stage.");
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        stepTimeline(1);
+        setWorkspaceStatus("Advanced to the next mission stage.");
+      }
+      if (event.key === "?") {
+        setWorkspaceStatus("Shortcuts: Space play/pause · ←/→ step timeline · Alt+1–0 switch workspaces.");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isPlaying]);
 
   const currentEvent = useMemo(
     () => (isApproved ? "Approval recorded — mission may advance to evidence review." : "Validation: HYP-02 is awaiting operator approval."),
@@ -187,7 +239,7 @@ export default function Home() {
           <div className="workspace-titlebar">
             <div>
               <div className="title-row"><h1>Mission timeline replay</h1><span className="template-tag">Timeline G</span></div>
-              <p>Replay ID: RPL-2025-05-21-1437 <span className="divider-dot">·</span> View: Full mission <ChevronDown size={14} /></p>
+              <p>Replay ID: RPL-2025-05-21-1437 <span className="divider-dot">·</span> View: Full mission <ChevronDown size={14} /> <span className="shortcut-hint"><kbd>?</kbd> Shortcuts</span></p>
             </div>
             <div className="utility-controls" aria-label="Timeline utilities">
               <button title="Inspect evidence register" onClick={() => changeWorkspace("Evidence")}><Search size={16} /></button><button title="Restart replay from target" onClick={() => { setIsPlaying(false); setSelectedStage(1); setWorkspaceStatus("Replay rewound to the target record."); }}><RotateCcw size={16} /></button><button title="Open mission desk" onClick={() => changeWorkspace("Dashboard")}><Menu size={16} /></button><button title="Open mission settings" onClick={() => changeWorkspace("Settings")}><SlidersHorizontal size={16} /></button>

@@ -14,3 +14,11 @@
 - [x] Add search and filtering controls for Findings and Evidence records.
 - [x] Add direct browser-side PDF export for the generated report record.
 - [x] Validate the enhanced interactions, build the frontend, and save an updated checkpoint.
+
+## Enhancement Pass — Persistence, Data, and Keyboard Control
+
+- [x] Persist NEXUS settings and register filters locally between browser sessions.
+- [x] Add documented keyboard shortcuts for mission replay and workspace navigation.
+- [x] Upgrade the project for backend and database support, then store and retrieve report records.
+- [x] Connect Reports workspace state to the persisted report record while retaining direct local exports.
+- [x] Validate persistence, keyboard behavior, report records, type checks, build, and checkpoint delivery.

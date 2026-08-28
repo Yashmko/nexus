@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="NEXUS mark">
+  <rect width="120" height="120" rx="18" fill="#14191F"/>
+  <rect x="1.5" y="1.5" width="117" height="117" rx="16.5" fill="none" stroke="#232B33" stroke-width="3"/>
+  <g stroke="#8DA4B5" stroke-width="8" stroke-linecap="round" fill="none">
+    <path d="M25 25 L50 50"/>
+    <path d="M95 25 L70 50"/>
+    <path d="M95 95 L70 70"/>
+    <path d="M25 95 L50 70"/>
+  </g>
+  <circle cx="60" cy="60" r="7" fill="#8DA4B5"/>
+</svg>

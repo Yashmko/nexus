@@ -67,3 +67,29 @@
 - [x] Defer live attachment uploads and approval notification delivery checks until the user creates real mission records; no synthetic mission data will be inserted.
 - [x] Defer real-record verification of activity rendering, evidence uploads, and approval-alert display until the user is ready; the user approved completion of all non-account-dependent work without synthetic mission data.
 - [ ] Verify activity rendering, evidence uploads, and approval-alert display with a real authenticated mission record when the user is ready; no synthetic mission data will be inserted.
+
+## Enhancement Pass — iPhone Web Experience
+
+- [ ] Rework NEXUS navigation and workspace chrome for narrow iPhone viewports without changing the desktop forensic layout.
+- [ ] Add touch-friendly mobile controls, readable timeline/workspace layouts, and mobile-safe drawers or overflow behavior.
+- [ ] Make authenticated Portfolio, Mission runtime, audit, evidence, and approval workflows usable from iPhone.
+- [ ] Validate responsive behavior at iPhone viewport sizes plus desktop regression, update tests, and save a mobile-ready checkpoint.
+- [ ] Verify the remaining real-record governance workflows from the user's iPhone once an authenticated mission exists; do not create synthetic mission data.
+
+## History
+
+- [x] Previous completion-pass checkpoint preserved the desktop NEXUS workspace and supported Linux package; mobile redesign is the next requested scope.
+- [x] Preserve functional Tools registry access on narrow and desktop layouts; the active snapshot does not contain the governed runtime component.
+
+## Delivery Pass — GitHub Repository Export
+
+- [x] Separate the stable NEXUS desktop/web project state from unfinished iPhone-responsive edits and temporary debug files.
+- [x] Create a new private GitHub repository named `nexus` and upload the selected NEXUS project files.
+- [x] Verify the remote repository contents and commit history, then share the GitHub link.
+- [x] Defer the iPhone-responsive enhancement and its remaining mobile validation until a later request.
+
+## Documentation Pass — NEXUS Project Details
+
+- [x] Audit the active NEXUS source and stable repository state for factual product, architecture, technology, governance, and roadmap details.
+- [x] Write and review a comprehensive `NEXUS_PROJECT_DETAILS.md` document suitable for a full project description.
+- [x] Synchronize the approved details document to the private `Yashmko/nexus` GitHub repository and deliver the file.

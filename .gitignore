@@ -31,6 +31,7 @@ ehthumbs.db
 Thumbs.db
 
 # Logs
+.manus-logs/
 logs
 *.log
 npm-debug.log*

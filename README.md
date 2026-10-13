@@ -125,7 +125,7 @@ client/    React 19 SPA — mission shell, timeline replay, workspaces, portfoli
 server/    Express + tRPC — protected procedures, database helpers, storage, tests
 shared/    Shared types, constants, and error contracts
 drizzle/   Drizzle schema, relations, and SQL migrations
-docs/      Brand assets
+docs/      Brand assets and the security review deliverables (docs/security-review/)
 ```
 
 **Data model:** `users` · `report_records` · `missions` · `mission_assignments` · `mission_approvals` · `mission_activity` · `mission_attachments` · `mission_notifications` — separating identity, governance, operational history, evidence metadata, and report snapshots.
@@ -156,6 +156,19 @@ Mission exists → user authenticated → permitted role → target in scope
 → adapter runs with bounded permissions & timeout → output redacted & stored with provenance
 → operator reviews evidence and conclusion
 ```
+
+## 🔒 Security review
+
+A security-focused review of the governance surface — role-based access control, server-side authorization, approval gates, audit logging, and evidence provenance — lives in **[docs/security-review/](docs/security-review/)**:
+
+| Document | Contents |
+|---|---|
+| [THREAT_MODEL.md](docs/security-review/THREAT_MODEL.md) | Assets, trust boundaries, roles, attack scenarios, assumptions |
+| [FINDINGS.md](docs/security-review/FINDINGS.md) | Confirmed defects, gaps and unverified areas with evidence and reproduction steps |
+| [TEST_RESULTS.md](docs/security-review/TEST_RESULTS.md) | Commands, pass/fail counts, and the limitations of those results |
+| [SECURITY_CONTROLS.md](docs/security-review/SECURITY_CONTROLS.md) | Implemented controls versus missing or unverified controls |
+
+The review covers the server-side authorization model and its regression tests. It is not a statement that the application is free of vulnerabilities, and several controls remain unimplemented (see `SECURITY_CONTROLS.md`).
 
 ## 🗺️ Roadmap
 

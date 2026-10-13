@@ -220,6 +220,13 @@ class SDKServer {
         return null;
       }
 
+      // Bind the session to this application: a token signed with the same
+      // secret but issued for a different app id must not authenticate here.
+      if (appId !== ENV.appId) {
+        console.warn("[Auth] Session appId does not match this application");
+        return null;
+      }
+
       return {
         openId,
         appId,

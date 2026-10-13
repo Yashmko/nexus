@@ -105,6 +105,15 @@ $ pnpm build      # vite build + esbuild server bundle
 ⚡ Done in 7ms
 ```
 
+### Independent CI run
+
+The pull request CI workflow (`.github/workflows/ci.yml`: `pnpm install --frozen-lockfile` → `pnpm check` → `pnpm test` → `pnpm build`, Node 22) was executed by GitHub Actions on this branch:
+
+```
+$ gh pr checks 4
+validate   pass   39s
+```
+
 ### HTTP status codes observed (real server, synthetic fixtures)
 
 | Request | Observed |

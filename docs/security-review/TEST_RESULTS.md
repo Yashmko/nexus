@@ -35,7 +35,8 @@ The pre-existing suite covers only unauthenticated rejections, the admin-only us
 | `server/security/httpSurface.test.ts` | 9 | Real Express + tRPC over HTTP: authorized query, unauthenticated query, **GET mutation rejected**, form-urlencoded POST rejected, `text/plain` POST rejected, authorized POST executes and is attributed, unauthenticated POST rejected, no permissive CORS headers, forged OAuth `state` rejected |
 | `server/security/storageProxy.test.ts` | 10 | Real `/manus-storage/*` handler over HTTP: anonymous evidence fetch denied, invalid/tampered session denied, non-participant denied, owner/analyst/approver/admin allowed, `Bearer`-only session allowed, traversal-shaped keys rejected, malformed mission keys rejected, public artwork still public, missing key, backend failure |
 | `server/security/session.test.ts` | 8 | Session minted for this app accepted; `Bearer` fallback accepted; **foreign `appId` rejected**; foreign secret rejected; expired token rejected; empty name claim rejected; missing credentials rejected; cron identity sees no tenant missions |
-| **Total new** | **60** | |
+| `client/src/lib/evidenceDownload.test.ts` | 11 | Evidence download helper: mirrored-session token parsing (including storage that throws), request options (cookie always, bearer when known), blob saved under the evidence file name on success, 401/404/503 do **not** save, transport failure flagged so the caller can fall back, no token sent when the session is absent |
+| **Total new** | **71** | |
 
 Test infrastructure (not tests): `server/security/inMemoryDb.ts` (in-memory Drizzle/MySQL fixture engine), `server/security/fixtures.ts` (synthetic role matrix), `server/security/harness.ts`, `server/security/httpClient.ts`, `server/security/testEnv.ts` (registered in `vitest.config.ts` `setupFiles`).
 
@@ -87,23 +88,60 @@ $ pnpm vitest run server/security/session.test.ts
 $ pnpm test
  ✓ server/security/authorization.test.ts (21 tests)
  ✓ server/security/approvalGate.test.ts (12 tests)
- ✓ server/security/httpSurface.test.ts (9 tests)
  ✓ server/security/storageProxy.test.ts (10 tests)
+ ✓ server/security/httpSurface.test.ts (9 tests)
+ ✓ client/src/lib/evidenceDownload.test.ts (11 tests)
  ✓ server/security/session.test.ts (8 tests)
  ✓ server/missions.test.ts (5 tests)
  ✓ server/auth.logout.test.ts (1 test)
  ✓ server/reports.test.ts (3 tests)
- Test Files  8 passed (8)
-      Tests  69 passed (69)
+ Test Files  9 passed (9)
+      Tests  80 passed (80)
 ```
 ```
 $ pnpm check      # tsc --noEmit
 (no output — exit code 0)
 $ pnpm build      # vite build + esbuild server bundle
-✓ built in 5.15s
+✓ built in 4.74s
   dist/index.js  56.7kb
 ⚡ Done in 7ms
 ```
+
+### Production-mode HTTP probe (temporary harness, not committed)
+
+To check behaviour that unit tests cannot show (real Express middleware, real cookies, `NODE_ENV=production`), the app wiring of `server/_core/index.ts` was booted locally on `127.0.0.1:4599` against the synthetic fixtures and driven with `curl` and a real session cookie. The object-storage backend was stubbed (no egress from the review environment).
+
+| Request | Observed |
+|---|---|
+| `GET /manus-storage/missions/100/evidence/…` anonymous | `401` `Authentication required` |
+| same, unrelated signed-in user | `404` `Storage object not found` |
+| same, tampered token | `401` |
+| same, owner / analyst / approver / admin | `307` → signed URL (`Location` present) |
+| same, `Authorization: Bearer <token>` only (no cookie) | `307` |
+| `GET /manus-storage/missions/../secrets.txt` sent with `--path-as-is` and as `%2e%2e` | `400` `Invalid storage key` (plain `curl` normalizes `..` client-side and never reaches this path) |
+| `GET /manus-storage/nexus-mark_bc2a72c9.png` anonymous | `307` (public artwork preserved) |
+| `missions.archive` over GET (owner) | `405` `METHOD_NOT_SUPPORTED`; mission unchanged |
+| `missions.archive` with `application/x-www-form-urlencoded` / `text/plain` | `415`; mission unchanged |
+| `missions.archive` JSON with owner session | `200`, `status: "archived"`, audit row `mission_archived (actor=1)` appended |
+| `missions.archive` JSON as a non-owner participant | `500` `Only a mission owner or administrator can archive this mission.` (see F-10: message is not masked) |
+| `missions.requestApproval` naming the requester as approver | `500` `An approval request cannot be assigned to its own requester.`; no approval row created |
+| `missions.requestApproval` from an unrelated user | `404` `Mission was not found or is outside your workspace.` |
+| Cross-origin request (`Origin: https://attacker.invalid`) | no `Access-Control-Allow-*` headers emitted |
+| `/api/oauth/callback` with forged `state`, no nonce cookie | `403` `invalid oauth state` |
+
+The verified `NODE_ENV=production` error payload for a denied action was `INTERNAL_SERVER_ERROR` (HTTP 500) with `message` intact and **no** `stack` field — this is the evidence behind the F-10 correction.
+
+### Download helper against a live HTTP server
+
+`client/src/lib/evidenceDownload.ts` was driven against the same local server with injected `save`/`fetchImpl` (temporary script, deleted afterwards):
+
+```
+init built for mirrored session: {"credentials":"include","headers":{"Authorization":"Bearer eyJ…"}}
+result: {"ok":true,"status":200}
+saved : {"name":"scan-output.txt","size":638,"type":"image/svg+xml;charset=utf-8"}
+denied : {"ok":false,"status":401,"message":"Sign in again to download this evidence file.","network":false} | savedAnything: false
+```
+That is a bearer-only session (no cookie) exercising the exact helper the browser will run: authorized download saves a blob under the evidence file name; the unauthenticated control saves nothing. The bytes returned came from the harness's placeholder object route, because the sandbox has no route to real object storage.
 
 ### Independent CI run
 
@@ -135,7 +173,7 @@ validate   pass   39s
 1. **The in-memory harness is not MySQL.** `server/security/inMemoryDb.ts` compiles the real SQL that Drizzle generates and evaluates it against synthetic rows, so the tests exercise the actual `WHERE` clauses and joins written by `server/db.ts`. It supports the statement shapes those helpers emit (`SELECT` with `inner/left join`, `WHERE`, `ORDER BY`, `LIMIT`, `INSERT … VALUES/ON DUPLICATE KEY UPDATE`, `UPDATE … SET … WHERE`) and throws on anything else. It does not model MySQL type coercion, collation, NULL semantics beyond equality, transactions, or isolation levels.
 2. **Production code gained one test seam.** `server/db.ts` exports `__setTestDatabase()` so a Drizzle instance can be injected; `getDb()` returns it verbatim and production never calls it. This is the only production change made purely for testability, and it is additive (no behavior change).
 3. **External services are stubbed.** The Forge presign call and the OAuth token exchange are replaced with local fakes; no network request leaves the machine. Consequently the *upstream* behavior of those services is not verified (see `FINDINGS.md` U-1/U-2).
-4. **No browser, no UI execution.** Client-side gating, the evidence download experience after F-02's fix, and visual/interaction behavior were not executed. Cookie-mediated sessions are simulated with a minted `app_session_id` header; the `Bearer` path is simulated with an `Authorization` header.
-5. **No production verification.** No deployed environment, real user record, or external target was accessed. The 69 passing tests are evidence about the reviewed commit's server-side logic, not a statement that the application is secure.
+4. **No browser, no UI execution.** Client-side gating, visual/interaction behavior, and the evidence-download helper's DOM path (`URL.createObjectURL` → anchor click, and the `window.open` fallback) were not executed; the helper is covered by unit tests with an injected transport/save, and exercised against a live HTTP server with an injected save. Cookie-mediated sessions are simulated with a minted `app_session_id` cookie; the `Bearer` path is simulated with an `Authorization` header.
+5. **No production verification.** No deployed environment, real user record, or external target was accessed. The 80 passing tests are evidence about the reviewed commit's logic, not a statement that the application is secure.
 6. **Tests are not a coverage metric.** No coverage tooling was run and no coverage percentage is claimed.
 7. **Re-run before relying on these results.** The commands are `pnpm install --frozen-lockfile && pnpm test && pnpm check && pnpm build` (see `README.md`).

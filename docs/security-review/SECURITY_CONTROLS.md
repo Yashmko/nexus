@@ -26,6 +26,7 @@ Status legend: **Implemented & verified** (code exists and a test executes it), 
 | Archive / assignment restricted to owner or administrator | Implemented & verified | `server/db.ts:199-242` | Denials throw, action not applied |
 | Evidence upload restricted to mission participants | Implemented & verified | `server/db.ts:318-334` | Non-participants → `NOT_FOUND` |
 | Evidence **download** restricted to mission participants | **Implemented & verified (added by this review)** | `server/_core/storageProxy.ts:61, 105-145` | Previously unauthenticated for any known key (F-02) |
+| Evidence download works without third-party cookies (client sends the session explicitly) | **Implemented; browser behaviour not verified (U-5)** | `client/src/lib/evidenceDownload.ts`, `client/src/components/MissionAuditPanel.tsx` | Fetches with `credentials: "include"` + `Authorization: Bearer` when mirrored, saves a blob; falls back to direct navigation if the object store sends no CORS headers (U-8) |
 | Report records scoped to the owning user; version history append-only | Implemented & verified | `server/db.ts:80-131` | Cross-owner `reportId` lookups return `null` (IDOR checked) |
 | Assignment **role** (analyst/reviewer/approver) enforced | **Missing** | — | Roles are stored and displayed only (F-04) |
 | Approval assignee validated (exists, holds `approver`, is a participant) | **Missing** | — | Any user id can be named, including non-participants (F-05) |
@@ -79,7 +80,8 @@ Status legend: **Implemented & verified** (code exists and a test executes it), 
 | Secrets read from environment at startup | Implemented | `server/_core/env.ts` |
 | Server-side credentials never returned to the client | Implemented & verified | No procedure returns Forge/DB/OAuth material |
 | Raw evidence bytes kept out of relational columns | Implemented | Metadata only in `mission_attachments` |
-| Stack traces / internal messages hidden in production errors | Implemented, not verified | tRPC includes stacks in non-production responses; production masking was not exercised here (F-10) |
+| Stack traces hidden in production error responses | Implemented & verified | Stacks are only serialized when `isDev` (verified in a `NODE_ENV=production` process: no `stack` field) |
+| Authorization denial messages hidden from clients | **Missing** | tRPC always serializes `error.message`; a production-mode run returned "Only a mission owner or administrator can archive this mission." verbatim (F-10) |
 | Object-storage namespace isolation per project | **Unverified** | Depends on the Forge backend (U-1); non-`missions/` keys remain publicly presignable |
 
 ## 7. Testing and process
@@ -100,4 +102,4 @@ Status legend: **Implemented & verified** (code exists and a test executes it), 
 3. **Approval enforcement point** (F-06) — what a future execution adapter must check before acting.
 4. **Session model** (F-12) — token lifetime, rotation, and revocation.
 5. **Audit retention/export and tamper-evidence** (F-08) — hash chain vs. database privileges; retention schedule.
-6. **Client-side evidence download rework** (F-02 follow-up, U-5) — fetch the object with the session header instead of a plain anchor so cookie-blocked sessions keep working.
+6. ~~**Client-side evidence download rework** (F-02 follow-up, U-5)~~ — implemented (`client/src/lib/evidenceDownload.ts`); what remains is browser confirmation in a cookie-blocked session, and whether the object store serves CORS headers (U-8), which decides whether the blob path or the navigation fallback is used.

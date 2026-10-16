@@ -20,7 +20,7 @@ Status legend: **Implemented & verified** (code exists and a test executes it), 
 
 | Control | Status | Where | Notes |
 |---|---|---|---|
-| Every procedure authenticated unless explicitly public | Implemented & verified | `server/_core/trpc.ts:11-22`, `server/routers.ts` | Public surface: `auth.me`, `auth.logout`, `system.health` only |
+| Every procedure authenticated unless explicitly public | Implemented & verified | `server/_core/trpc.ts:11-25`, `server/routers.ts` | Public surface: `auth.me`, `auth.logout`, `system.health` only |
 | Mission read scoping = owner ∪ assigned ∪ administrator | Implemented & verified | `server/db.ts:144-148, 150-186` | Tests cover all five non-admin roles plus admin |
 | Sub-resource scoping (`activity`, `attachments`, `assignments`, `approvals`, `notifications`) | Implemented & verified | `server/db.ts:265-277, 300-357, 359-378` | Non-participants get `NOT_FOUND` (or an empty notification list) |
 | Archive / assignment restricted to owner or administrator | Implemented & verified | `server/db.ts:199-242` | Denials throw, action not applied |

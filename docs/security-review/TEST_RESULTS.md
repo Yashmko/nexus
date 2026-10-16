@@ -36,8 +36,8 @@ The pre-existing suite covers only unauthenticated rejections, the admin-only us
 | `server/security/storageProxy.test.ts` | 10 | Real `/manus-storage/*` handler over HTTP: anonymous evidence fetch denied, invalid/tampered session denied, non-participant denied, owner/analyst/approver/admin allowed, `Bearer`-only session allowed, traversal-shaped keys rejected, malformed mission keys rejected, public artwork still public, missing key, backend failure |
 | `server/security/session.test.ts` | 8 | Session minted for this app accepted; `Bearer` fallback accepted; **foreign `appId` rejected**; foreign secret rejected; expired token rejected; empty name claim rejected; missing credentials rejected; cron identity sees no tenant missions |
 | `client/src/lib/evidenceDownload.test.ts` | 11 | Evidence download helper: mirrored-session token parsing (including storage that throws), request options (cookie always, bearer when known), blob saved under the evidence file name on success, 401/404/503 do **not** save, transport failure flagged so the caller can fall back, no token sent when the session is absent |
-| `client/src/lib/debugCollector.test.ts` | 6 | Debug collector loaded as the real file in a Node `vm` sandbox: `Authorization`/`Cookie`/`X-Api-Key` request headers redacted with non-sensitive headers preserved; `Set-Cookie`/`X-Session-Token` response headers redacted; case-insensitive matching against a case-preserving `Headers` double; unload (`sendBeacon`) payload secret-free; XHR payload secret-free; sensitive header names inside console arguments redacted. All assertions search the serialized payloads for the synthetic secrets, not just the marker |
-| **Total new** | **77** | |
+| `client/src/lib/debugCollector.test.ts` | 10 | Debug collector loaded as the real file in a Node `vm` sandbox: `Authorization`/`Cookie`/`X-Api-Key` request headers redacted with non-sensitive headers preserved; `Set-Cookie`/`X-Session-Token` response headers redacted; case-insensitive matching against a case-preserving `Headers` double; **every documented credential header name** (`Proxy-Authorization`, `Authentication`, `X-Auth-Token`, `X-Session-Id`, `X-Amz-Security-Token`, …) redacted; unparsable header input fails closed (`_parseError`); credential-shaped **body** keys redacted and long values truncated; unload (`sendBeacon`) payload secret-free **including the >60 000-character truncation branch**; XHR payload secret-free; sensitive header names inside console arguments redacted. All assertions search the serialized payloads for the synthetic secrets, not just the marker |
+| **Total new** | **81** | |
 
 Test infrastructure (not tests): `server/security/inMemoryDb.ts` (in-memory Drizzle/MySQL fixture engine), `server/security/fixtures.ts` (synthetic role matrix), `server/security/harness.ts`, `server/security/httpClient.ts`, `server/security/testEnv.ts` (registered in `vitest.config.ts` `setupFiles`).
 
@@ -103,22 +103,35 @@ $ pnpm vitest run client/src/lib/debugCollector.test.ts      # collector still u
 
 The two tests that passed pre-fix pin behaviour that was already safe (no XHR header capture; console arguments already redacted).
 
+After the file was widened to 10 tests (§3), the same pre-fix collector fails 6 of them:
+
+```
+$ pnpm vitest run client/src/lib/debugCollector.test.ts     # pre-fix collector, widened file
+ FAIL  … > redacts every documented credential header name, including names only the explicit list covers
+ FAIL  … > keeps the truncated unload beacon secret-free
+ … (plus the four failures listed above)
+ Test Files  1 failed (1)
+      Tests  6 failed | 4 passed (10)
+```
+
+The two additions that change verdict are the name-table test (the `authentication` entry is covered by the explicit list alone, since it matches no `sensitiveFields` substring) and the truncated-beacon test. The `_parseError` and request-body additions pass pre-fix, because they pin behaviour that was already safe.
+
 ## 5. Final state after the fixes
 
 ```
 $ pnpm test
- ✓ client/src/lib/debugCollector.test.ts (6 tests) 28ms
- ✓ server/security/authorization.test.ts (21 tests) 95ms
- ✓ server/security/approvalGate.test.ts (12 tests) 91ms
- ✓ server/security/storageProxy.test.ts (10 tests) 101ms
- ✓ server/security/httpSurface.test.ts (9 tests) 131ms
- ✓ client/src/lib/evidenceDownload.test.ts (11 tests) 10ms
+ ✓ client/src/lib/debugCollector.test.ts (10 tests) 40ms
+ ✓ server/security/authorization.test.ts (21 tests) 82ms
+ ✓ server/security/approvalGate.test.ts (12 tests) 102ms
+ ✓ server/security/storageProxy.test.ts (10 tests) 96ms
+ ✓ server/security/httpSurface.test.ts (9 tests) 137ms
+ ✓ client/src/lib/evidenceDownload.test.ts (11 tests) 8ms
  ✓ server/security/session.test.ts (8 tests) 29ms
  ✓ server/missions.test.ts (5 tests) 5ms
- ✓ server/auth.logout.test.ts (1 test) 4ms
- ✓ server/reports.test.ts (3 tests) 4ms
+ ✓ server/auth.logout.test.ts (1 test) 6ms
+ ✓ server/reports.test.ts (3 tests) 3ms
  Test Files  10 passed (10)
-      Tests  86 passed (86)
+      Tests  90 passed (90)
 ```
 ```
 $ pnpm check      # tsc --noEmit
@@ -150,6 +163,20 @@ To check behaviour that unit tests cannot show (real Express middleware, real co
 | `missions.requestApproval` from an unrelated user | `404` `Mission was not found or is outside your workspace.` |
 | Cross-origin request (`Origin: https://attacker.invalid`) | no `Access-Control-Allow-*` headers emitted |
 | `/api/oauth/callback` with forged `state`, no nonce cookie | `403` `invalid oauth state` |
+
+Re-verified at `e05e7d8` with a second temporary in-process probe (real Express + tRPC middleware, synthetic fixtures, `NODE_ENV=production` set before the app modules load; script deleted afterwards):
+
+```
+$ pnpm tsx tmp-prod-error-probe.ts
+denial (analyst-a archiving the owner's mission): 500
+  [{"error":{"json":{"message":"Only a mission owner or administrator can archive this mission.",
+    "code":-32603,"data":{"code":"INTERNAL_SERVER_ERROR","httpStatus":500,"path":"missions.archive"}}}}]
+  contains "stack": false
+denial (outsider, not a participant): 404  "Mission was not found or is outside your workspace."
+owner control                        : 200  archived: true
+```
+
+That confirms the F-10 correction on the current head: the internal denial message is returned verbatim in production with no stack trace, while the owner's archive still succeeds.
 
 The verified `NODE_ENV=production` error payload for a denied action was `INTERNAL_SERVER_ERROR` (HTTP 500) with `message` intact and **no** `stack` field — this is the evidence behind the F-10 correction.
 
@@ -185,9 +212,14 @@ Non-sensitive headers survive and the credentials do not reach either log file. 
 The pull request CI workflow (`.github/workflows/ci.yml`: `pnpm install --frozen-lockfile` → `pnpm check` → `pnpm test` → `pnpm build`, Node 22) was executed by GitHub Actions on this branch:
 
 ```
-$ gh pr checks 4
-validate   pass   39s
+$ gh run list --branch arena/a560927c-nexus
+38856492975  e05e7d8  completed/success   # F-13 debug-collector redaction
+38353753178  50fcf81  completed/success   # Part 2 client evidence download
+38348954138  e906483  completed/success
+38348880302  0180620  completed/success
 ```
+
+Each run executes `pnpm install --frozen-lockfile` → `pnpm check` → `pnpm test` → `pnpm build` on Node 22. Commits pushed after this document was written (including documentation-only commits) are validated by the same workflow; the PR checks page shows the result for the current head.
 
 ### HTTP status codes observed (real server, synthetic fixtures)
 
@@ -211,7 +243,7 @@ validate   pass   39s
 2. **Production code gained one test seam.** `server/db.ts` exports `__setTestDatabase()` so a Drizzle instance can be injected; `getDb()` returns it verbatim and production never calls it. This is the only production change made purely for testability, and it is additive (no behavior change).
 3. **External services are stubbed.** The Forge presign call and the OAuth token exchange are replaced with local fakes; no network request leaves the machine. Consequently the *upstream* behavior of those services is not verified (see `FINDINGS.md` U-1/U-2).
 4. **No browser, no UI execution.** Client-side gating, visual/interaction behavior, and the evidence-download helper's DOM path (`URL.createObjectURL` → anchor click, and the `window.open` fallback) were not executed; the helper is covered by unit tests with an injected transport/save, and exercised against a live HTTP server with an injected save. Cookie-mediated sessions are simulated with a minted `app_session_id` cookie; the `Bearer` path is simulated with an `Authorization` header.
-5. **No production verification.** No deployed environment, real user record, or external target was accessed. The 86 passing tests are evidence about the reviewed commit's logic, not a statement that the application is secure.
+5. **No production verification.** No deployed environment, real user record, or external target was accessed. The 90 passing tests are evidence about the reviewed commit's logic, not a statement that the application is secure.
 6. **Tests are not a coverage metric.** No coverage tooling was run and no coverage percentage is claimed.
 7. **Re-run before relying on these results.** The commands are `pnpm install --frozen-lockfile && pnpm test && pnpm check && pnpm build` (see `README.md`).
 8. **The debug-collector tests do not run a browser.** `client/public/__manus__/debug-collector.js` is loaded into a Node `vm` sandbox with stub `window`/`document`/`XMLHttpRequest`/`navigator`; the fetch wrapper's own report POST is played by a recording `fetch` whose payload is asserted against what `vite.config.ts` writes to `.manus-logs`. That covers the collector's capture and redaction logic, but not a real browser's `Headers`/`sendBeacon`/`XMLHttpRequest` implementations, and it cannot observe what a browser would put into the log. The end-to-end variant of this check (collector POST driven over real HTTP to a locally running dev server, log file inspected) is described in §5.

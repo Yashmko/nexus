@@ -397,6 +397,121 @@ describe("debug collector credential redaction", () => {
     expectSecretFree(report);
   });
 
+  it("redacts every documented credential header name, including names only the explicit list covers", async () => {
+    const harness = loadCollector();
+    // `authentication` matches no `sensitiveFields` substring, so it is covered
+    // by CONFIG.sensitiveHeaderNames alone; the rest exercise the substring
+    // policy (`token`, `key`, `session`). All values are synthetic.
+    const names = [
+      "Authorization",
+      "Proxy-Authorization",
+      "Authentication",
+      "Cookie",
+      "Set-Cookie",
+      "X-Api-Key",
+      "X-Auth-Token",
+      "X-Session-Id",
+      "X-Amz-Security-Token",
+    ];
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    for (const name of names) headers[name] = `synthetic-value-for-${name.toLowerCase()}`;
+
+    await harness.fetch("http://localhost:4599/api/trpc/missions.list", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ includeArchived: true }),
+    });
+    await harness.waitForNetworkEntries(1);
+
+    const [entry] = harness.store.networkRequests as Array<{
+      request: { headers: Record<string, string> };
+    }>;
+    for (const name of names) {
+      expect(entry.request.headers[name.toLowerCase()]).toBe("[REDACTED]");
+    }
+    expect(entry.request.headers["content-type"]).toBe("application/json");
+
+    const [report] = await harness.flushReports();
+    expectSecretFree(report);
+    expect(JSON.stringify(report)).not.toContain("synthetic-value-for-");
+  });
+
+  it("fails closed when the header input cannot be parsed", async () => {
+    const harness = loadCollector();
+    const malformed = [
+      ["Authorization", `Bearer ${BEARER_TOKEN}`],
+      ["bad header name", "value"],
+    ];
+
+    await harness.fetch("http://localhost:4599/api/trpc/missions.list", {
+      method: "POST",
+      // An invalid header name makes `new Headers(...)` throw; the collector
+      // records a marker instead of the headers, so nothing is captured.
+      headers: malformed as unknown as Record<string, string>,
+      body: "{}",
+    });
+    await harness.waitForNetworkEntries(1);
+
+    const [entry] = harness.store.networkRequests as Array<{
+      request: { headers: Record<string, string> };
+    }>;
+    expect(entry.request.headers).toEqual({ _parseError: true });
+
+    const [report] = await harness.flushReports();
+    expectSecretFree(report);
+  });
+
+  it("redacts credential-shaped keys in request bodies and truncates long values", async () => {
+    const harness = loadCollector();
+    await harness.fetch("http://localhost:4599/api/trpc/reports.save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        missionId: 100,
+        password: "synthetic-password-value",
+        apiToken: API_KEY_VALUE,
+        contentBase64: "A".repeat(2000),
+      }),
+    });
+    await harness.waitForNetworkEntries(1);
+
+    const [entry] = harness.store.networkRequests as Array<{
+      request: { body: Record<string, unknown> };
+    }>;
+    expect(entry.request.body.missionId).toBe(100);
+    expect(entry.request.body.password).toBe("[REDACTED]");
+    expect(entry.request.body.apiToken).toBe("[REDACTED]");
+    // Long non-credential values are truncated to 1000 characters by
+    // `sanitizeValue`, which is what keeps large uploads out of the log.
+    expect(String(entry.request.body.contentBase64)).toHaveLength(1000 + "...[truncated]".length);
+
+    const [report] = await harness.flushReports();
+    expectSecretFree(report);
+    expect(JSON.stringify(report)).not.toContain("synthetic-password-value");
+  });
+
+  it("keeps the truncated unload beacon secret-free", async () => {
+    const harness = loadCollector();
+    await harness.fetch("http://localhost:4599/api/trpc/mission.archive", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${BEARER_TOKEN}` },
+      body: JSON.stringify({ missionId: 100 }),
+    });
+    await harness.waitForNetworkEntries(1);
+    // Console entries are capped at 1000 characters each; enough of them push
+    // the beacon payload past the 60 000 character limit and force the
+    // truncation branch.
+    for (let i = 0; i < 80; i++) harness.console.log(i, "x".repeat(990));
+
+    harness.fireUnload();
+
+    expect(harness.beaconBodies).toHaveLength(1);
+    const beacon = JSON.parse(harness.beaconBodies[0]);
+    expect(beacon._truncated).toBe(true);
+    expectSecretFree(harness.beaconBodies[0]);
+    expect(JSON.stringify(beacon.networkRequests)).toContain("[REDACTED]");
+  });
+
   it("redacts sensitive header names inside console arguments", async () => {
     const harness = loadCollector();
 

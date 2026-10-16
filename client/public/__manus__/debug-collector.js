@@ -36,6 +36,17 @@
       "cookie",
       "session",
     ],
+    // Header names whose values are never persisted, matched case-insensitively.
+    // `sensitiveFields` substrings are matched against header names as well, so
+    // `x-api-key`, `x-auth-token`, `x-session-*` and `x-amz-security-token` are
+    // covered even though they are not listed here.
+    sensitiveHeaderNames: [
+      "authorization", // Bearer tokens (tRPC client, evidence download)
+      "proxy-authorization",
+      "authentication", // non-standard variants of the above
+      "cookie", // session cookies forwarded by the caller
+      "set-cookie", // session refresh seen on the response side
+    ],
     maxBodyLength: 10240,
     // UI event logging privacy policy:
     // - inputs matching sensitiveFields or type=password are masked by default
@@ -92,6 +103,29 @@
         }
       }
     }
+    return sanitized;
+  }
+
+  function isSensitiveHeaderName(name) {
+    var normalized = String(name).toLowerCase().trim();
+    if (CONFIG.sensitiveHeaderNames.indexOf(normalized) !== -1) return true;
+    return CONFIG.sensitiveFields.some(function (f) {
+      return normalized.indexOf(f) !== -1;
+    });
+  }
+
+  // Header maps are captured as plain objects (`Object.fromEntries` over a
+  // Headers iterator). Redacting here keeps credentials out of the in-memory
+  // buffers, the periodic report and the unload beacon alike.
+  function sanitizeHeaders(headers) {
+    if (!headers || typeof headers !== "object") return headers;
+
+    var sanitized = {};
+    Object.keys(headers).forEach(function (name) {
+      sanitized[name] = isSensitiveHeaderName(name)
+        ? "[REDACTED]"
+        : sanitizeValue(headers[name]);
+    });
     return sanitized;
   }
 
@@ -470,7 +504,11 @@
     var requestHeaders = {};
     try {
       if (init.headers) {
-        requestHeaders = Object.fromEntries(new Headers(init.headers).entries());
+        // Redacted before buffering: `Authorization`/`Cookie` on app requests
+        // must never reach the debug log.
+        requestHeaders = sanitizeHeaders(
+          Object.fromEntries(new Headers(init.headers).entries())
+        );
       }
     } catch (e) {
       requestHeaders = { _parseError: true };
@@ -500,7 +538,7 @@
         entry.response = {
           status: response.status,
           statusText: response.statusText,
-          headers: Object.fromEntries(response.headers.entries()),
+          headers: sanitizeHeaders(Object.fromEntries(response.headers.entries())),
           body: null,
         };
 

@@ -36,7 +36,8 @@ The pre-existing suite covers only unauthenticated rejections, the admin-only us
 | `server/security/storageProxy.test.ts` | 10 | Real `/manus-storage/*` handler over HTTP: anonymous evidence fetch denied, invalid/tampered session denied, non-participant denied, owner/analyst/approver/admin allowed, `Bearer`-only session allowed, traversal-shaped keys rejected, malformed mission keys rejected, public artwork still public, missing key, backend failure |
 | `server/security/session.test.ts` | 8 | Session minted for this app accepted; `Bearer` fallback accepted; **foreign `appId` rejected**; foreign secret rejected; expired token rejected; empty name claim rejected; missing credentials rejected; cron identity sees no tenant missions |
 | `client/src/lib/evidenceDownload.test.ts` | 11 | Evidence download helper: mirrored-session token parsing (including storage that throws), request options (cookie always, bearer when known), blob saved under the evidence file name on success, 401/404/503 do **not** save, transport failure flagged so the caller can fall back, no token sent when the session is absent |
-| **Total new** | **71** | |
+| `client/src/lib/debugCollector.test.ts` | 6 | Debug collector loaded as the real file in a Node `vm` sandbox: `Authorization`/`Cookie`/`X-Api-Key` request headers redacted with non-sensitive headers preserved; `Set-Cookie`/`X-Session-Token` response headers redacted; case-insensitive matching against a case-preserving `Headers` double; unload (`sendBeacon`) payload secret-free; XHR payload secret-free; sensitive header names inside console arguments redacted. All assertions search the serialized payloads for the synthetic secrets, not just the marker |
+| **Total new** | **77** | |
 
 Test infrastructure (not tests): `server/security/inMemoryDb.ts` (in-memory Drizzle/MySQL fixture engine), `server/security/fixtures.ts` (synthetic role matrix), `server/security/harness.ts`, `server/security/httpClient.ts`, `server/security/testEnv.ts` (registered in `vitest.config.ts` `setupFiles`).
 
@@ -82,29 +83,50 @@ $ pnpm vitest run server/security/session.test.ts
       Tests  1 failed | 7 passed (8)
 ```
 
+### 4.4 Debug-collector header redaction (test written against the unfixed collector)
+
+The regression test was written and run **before** the collector was changed, so the failure is the evidence that the exposure was real — no revert step was needed.
+
+```
+$ pnpm vitest run client/src/lib/debugCollector.test.ts      # collector still unfixed
+ FAIL  debug collector credential redaction > redacts Authorization, Cookie and API-key request headers before they are buffered
+   AssertionError: expected 'Bearer nxs_live_9f3c1d7a5b2e4f6089abc…' to be '[REDACTED]'
+ FAIL  debug collector credential redaction > redacts sensitive response headers, including Set-Cookie
+   AssertionError: expected 'app_session_id=eyJhbGciOiJIUzI1NiJ9.r…' to be '[REDACTED]'
+ FAIL  debug collector credential redaction > redacts header names case-insensitively even when the platform preserves casing
+   AssertionError: expected 'Bearer nxs_live_9f3c1d7a5b2e4f6089abc…' to be '[REDACTED]'
+ FAIL  debug collector credential redaction > does not leak credentials through the unload beacon payload
+   AssertionError: expected '{"timestamp":…,"networkRequests":[{"…"request":{"headers":{"authorization":"Bearer nxs_live_9f3c1d7a5b2e4f6089abcdef01234567","cookie":"app_session_id=…"}}…' not to contain 'nxs_live_9f3c1d7a5b2e4f6089abcdef01234567'
+ Test Files  1 failed (1)
+      Tests  4 failed | 2 passed (6)
+```
+
+The two tests that passed pre-fix pin behaviour that was already safe (no XHR header capture; console arguments already redacted).
+
 ## 5. Final state after the fixes
 
 ```
 $ pnpm test
- ✓ server/security/authorization.test.ts (21 tests)
- ✓ server/security/approvalGate.test.ts (12 tests)
- ✓ server/security/storageProxy.test.ts (10 tests)
- ✓ server/security/httpSurface.test.ts (9 tests)
- ✓ client/src/lib/evidenceDownload.test.ts (11 tests)
- ✓ server/security/session.test.ts (8 tests)
- ✓ server/missions.test.ts (5 tests)
- ✓ server/auth.logout.test.ts (1 test)
- ✓ server/reports.test.ts (3 tests)
- Test Files  9 passed (9)
-      Tests  80 passed (80)
+ ✓ client/src/lib/debugCollector.test.ts (6 tests) 28ms
+ ✓ server/security/authorization.test.ts (21 tests) 95ms
+ ✓ server/security/approvalGate.test.ts (12 tests) 91ms
+ ✓ server/security/storageProxy.test.ts (10 tests) 101ms
+ ✓ server/security/httpSurface.test.ts (9 tests) 131ms
+ ✓ client/src/lib/evidenceDownload.test.ts (11 tests) 10ms
+ ✓ server/security/session.test.ts (8 tests) 29ms
+ ✓ server/missions.test.ts (5 tests) 5ms
+ ✓ server/auth.logout.test.ts (1 test) 4ms
+ ✓ server/reports.test.ts (3 tests) 4ms
+ Test Files  10 passed (10)
+      Tests  86 passed (86)
 ```
 ```
 $ pnpm check      # tsc --noEmit
 (no output — exit code 0)
 $ pnpm build      # vite build + esbuild server bundle
-✓ built in 4.74s
+✓ built in 5.38s
   dist/index.js  56.7kb
-⚡ Done in 7ms
+⚡ Done in 8ms
 ```
 
 ### Production-mode HTTP probe (temporary harness, not committed)
@@ -143,6 +165,21 @@ denied : {"ok":false,"status":401,"message":"Sign in again to download this evid
 ```
 That is a bearer-only session (no cookie) exercising the exact helper the browser will run: authorized download saves a blob under the evidence file name; the unauthenticated control saves nothing. The bytes returned came from the harness's placeholder object route, because the sandbox has no route to real object storage.
 
+### Debug-collector log redaction against a live dev server
+
+The real collector file was loaded into a Node `vm` sandbox whose `fetch` is Node's own, so the collector's report POST travelled over real HTTP to the dev server started by the temporary preview harness (`setupVite` → the unmodified `vite.config.ts` plugin). A request carrying synthetic credentials was made, the report was flushed, and `.manus-logs/networkRequests.log` was inspected (script deleted afterwards; the log directory is git-ignored via `*.log`):
+
+```
+$ grep -c "nxs_live_e2e\|e2e-cookie\|forge_e2e" .manus-logs/*.log
+.manus-logs/browserConsole.log:0
+.manus-logs/networkRequests.log:0
+
+$ cat .manus-logs/networkRequests.log
+[2026-10-16T05:32:19.803Z] {"timestamp":1792128739659,"type":"fetch","method":"GET","url":"http://localhost:4599/__preview/session?as=owner","request":{"headers":{"accept":"text/html","authorization":"[REDACTED]","cookie":"[REDACTED]","x-api-key":"[REDACTED]","x-request-id":"e2e-1"},"body":null},"response":{"status":200,…},"duration":30,"error":null}
+```
+
+Non-sensitive headers survive and the credentials do not reach either log file. Not covered by this probe: response-side `Set-Cookie` redaction over the wire. The dev sign-in route (`/__preview/session?as=owner`) does return `Set-Cookie: app_session_id=…` (visible to `curl -i`), but neither Node's fetch nor a browser exposes `set-cookie` on a response object, so it never reached the collector here; that path is covered by the unit test that constructs an explicit `Response` with a `set-cookie` header.
+
 ### Independent CI run
 
 The pull request CI workflow (`.github/workflows/ci.yml`: `pnpm install --frozen-lockfile` → `pnpm check` → `pnpm test` → `pnpm build`, Node 22) was executed by GitHub Actions on this branch:
@@ -174,6 +211,8 @@ validate   pass   39s
 2. **Production code gained one test seam.** `server/db.ts` exports `__setTestDatabase()` so a Drizzle instance can be injected; `getDb()` returns it verbatim and production never calls it. This is the only production change made purely for testability, and it is additive (no behavior change).
 3. **External services are stubbed.** The Forge presign call and the OAuth token exchange are replaced with local fakes; no network request leaves the machine. Consequently the *upstream* behavior of those services is not verified (see `FINDINGS.md` U-1/U-2).
 4. **No browser, no UI execution.** Client-side gating, visual/interaction behavior, and the evidence-download helper's DOM path (`URL.createObjectURL` → anchor click, and the `window.open` fallback) were not executed; the helper is covered by unit tests with an injected transport/save, and exercised against a live HTTP server with an injected save. Cookie-mediated sessions are simulated with a minted `app_session_id` cookie; the `Bearer` path is simulated with an `Authorization` header.
-5. **No production verification.** No deployed environment, real user record, or external target was accessed. The 80 passing tests are evidence about the reviewed commit's logic, not a statement that the application is secure.
+5. **No production verification.** No deployed environment, real user record, or external target was accessed. The 86 passing tests are evidence about the reviewed commit's logic, not a statement that the application is secure.
 6. **Tests are not a coverage metric.** No coverage tooling was run and no coverage percentage is claimed.
 7. **Re-run before relying on these results.** The commands are `pnpm install --frozen-lockfile && pnpm test && pnpm check && pnpm build` (see `README.md`).
+8. **The debug-collector tests do not run a browser.** `client/public/__manus__/debug-collector.js` is loaded into a Node `vm` sandbox with stub `window`/`document`/`XMLHttpRequest`/`navigator`; the fetch wrapper's own report POST is played by a recording `fetch` whose payload is asserted against what `vite.config.ts` writes to `.manus-logs`. That covers the collector's capture and redaction logic, but not a real browser's `Headers`/`sendBeacon`/`XMLHttpRequest` implementations, and it cannot observe what a browser would put into the log. The end-to-end variant of this check (collector POST driven over real HTTP to a locally running dev server, log file inspected) is described in §5.
+9. **Test files are not type-checked.** `tsconfig.json` excludes `**/*.test.ts`, so `pnpm check` validates production code only; Vitest transpiles tests without type checking.

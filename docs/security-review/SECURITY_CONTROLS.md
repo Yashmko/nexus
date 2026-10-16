@@ -80,6 +80,7 @@ Status legend: **Implemented & verified** (code exists and a test executes it), 
 | Secrets read from environment at startup | Implemented | `server/_core/env.ts` |
 | Server-side credentials never returned to the client | Implemented & verified | No procedure returns Forge/DB/OAuth material |
 | Raw evidence bytes kept out of relational columns | Implemented | Metadata only in `mission_attachments` |
+| Development debug logs redact credentials | **Implemented & verified (added by this review)** | `client/public/__manus__/debug-collector.js:43,109-130,509,541` | Request/response header values matching the credential policy are replaced with `"[REDACTED]"` before buffering, so the periodic report and the unload beacon cannot carry them; non-sensitive headers are preserved (F-13) |
 | Stack traces hidden in production error responses | Implemented & verified | Stacks are only serialized when `isDev` (verified in a `NODE_ENV=production` process: no `stack` field) |
 | Authorization denial messages hidden from clients | **Missing** | tRPC always serializes `error.message`; a production-mode run returned "Only a mission owner or administrator can archive this mission." verbatim (F-10) |
 | Object-storage namespace isolation per project | **Unverified** | Depends on the Forge backend (U-1); non-`missions/` keys remain publicly presignable |

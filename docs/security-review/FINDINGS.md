@@ -213,6 +213,44 @@ The client is *narrower* than the server: the approval form and the evidence-upl
 
 ---
 
+## F-13 — Development debug collector persisted request credentials in clear text — Low — **Fixed**
+
+**Affected code**
+- `client/public/__manus__/debug-collector.js:473` (pre-fix) — fetch **request** headers were captured with `Object.fromEntries(new Headers(init.headers).entries())` and stored verbatim.
+- `client/public/__manus__/debug-collector.js:503` (pre-fix) — **response** headers were stored verbatim as well.
+- `client/src/main.tsx:57` — the tRPC client attaches `Authorization: Bearer <session token>` whenever the runtime mirrored `manus-cookie` (the preview flow and cookie-blocked browsers).
+- `vite.config.ts:82` (script only injected when `NODE_ENV !== "production"`), `vite.config.ts:15,52-65,113` (`POST /__manus__/logs` appends to `.manus-logs/networkRequests.log`).
+
+**Impact.** `sanitizeValue()` redacted credential-shaped keys in bodies and console arguments, but both header paths bypassed it. A session token therefore reached `.manus-logs/networkRequests.log` in clear text, was held in `store.networkRequests` (exposed as `window.__MANUS_DEBUG_COLLECTOR__.store`), and was also transmitted by the `beforeunload` `sendBeacon` fallback. Scope is development-only: the collector is not injected in production, and the log directory is git-ignored (`*.log`). No evidence that such a log was ever committed, or that production traffic was affected — the practical exposure is a locally persisted session token (shared dev machine, screen share, log attached to a report) that can be replayed against the dev server for its one-year lifetime (F-12).
+
+**Evidence (pre-fix, executed)**
+```
+$ pnpm vitest run client/src/lib/debugCollector.test.ts      # before the fix
+ FAIL  debug collector credential redaction > redacts Authorization, Cookie and API-key request headers before they are buffered
+ FAIL  debug collector credential redaction > redacts sensitive response headers, including Set-Cookie
+ FAIL  debug collector credential redaction > redacts header names case-insensitively even when the platform preserves casing
+ FAIL  debug collector credential redaction > does not leak credentials through the unload beacon payload
+ Test Files  1 failed (1)
+      Tests  4 failed | 2 passed (6)
+```
+The beacon failure printed the serialized payload verbatim: `"request":{"headers":{"authorization":"Bearer nxs_live_…","cookie":"app_session_id=…"}}` — i.e. the exact bytes the Vite plugin appends to the log file. The two tests that already passed pre-fix pin behaviour that was safe: XHR headers are never captured at all, and console arguments were already redacted.
+
+**Remediation applied** — capture-time redaction in `client/public/__manus__/debug-collector.js`:
+- `CONFIG.sensitiveHeaderNames` (`authorization`, `proxy-authorization`, `authentication`, `cookie`, `set-cookie`) and `isSensitiveHeaderName()` (line 109), which matches those names case-insensitively **and** re-uses the existing `sensitiveFields` substring policy, so `x-api-key`, `x-auth-token`, `x-session-*` and `x-amz-security-token` are covered without being listed.
+- `sanitizeHeaders()` (line 120) writes the file's existing `"[REDACTED]"` marker and is applied at both capture sites (request line 509, response line 541). Redaction happens before the entry enters the buffers, so the periodic report and the unload beacon are covered by construction rather than by a second filter.
+- No header is dropped: names stay visible and non-sensitive values are unchanged, so `content-type`, `accept`, trace ids and statuses remain useful for debugging.
+
+**Verification.** `client/src/lib/debugCollector.test.ts` (6 tests) loads the real collector file into a Node `vm` sandbox and asserts on the serialized payloads that the Vite plugin writes to `.manus-logs` — request-side `Authorization`/`Cookie`/`X-Api-Key` redacted with `Content-Type`/`Accept`/`X-Request-Id` preserved; response-side `Set-Cookie`/`X-Session-Token` redacted; case-insensitive matching against a case-preserving `Headers` double; unload-beacon payload secret-free; XHR payload secret-free; console arguments redacted. In addition, the collector's own report POST was driven over real HTTP to the running dev server, and the unmodified writer stored `{"accept":"text/html","authorization":"[REDACTED]","cookie":"[REDACTED]","x-api-key":"[REDACTED]","x-request-id":"e2e-1"}` in `.manus-logs/networkRequests.log`, with zero occurrences of the synthetic credentials in either log file.
+
+**Residual risk / not covered.**
+- URL query strings are still logged verbatim (`entry.url`, and `href` in UI events), so a credential placed in a query parameter would still be persisted. Redacting URLs would remove the most useful debugging signal, so this is documented rather than changed.
+- `Set-Cookie` is a forbidden response header in browsers, so the response-side rule is defense-in-depth: it is exercised with an explicit `Response` object, and Node's fetch was observed in this environment never to expose `set-cookie` on a real response either (the dev sign-in route does set a session cookie, visible only to `curl`).
+- XHR requests carry no headers into the log (the collector does not patch `setRequestHeader`). That is a capture gap, not a leak; closing it would add a new credential-bearing path, so it was left alone.
+- The Vite-side writer has no independent redaction layer: anything else that POSTs to `/__manus__/logs` is not sanitized. Defense-in-depth suggestion, not part of this change.
+- The tests exercise the collector outside a browser (no DOM, no real `XMLHttpRequest`/beacon implementation); see `TEST_RESULTS.md` §6.
+
+---
+
 ## Unverified areas (could not be confirmed or refuted with the tools available)
 
 | ID | Area | Why unverified | What would settle it |

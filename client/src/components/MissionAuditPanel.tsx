@@ -1,6 +1,7 @@
 import { ChangeEvent, useState } from "react";
 import { BellRing, FileText, History, Paperclip, Upload } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { downloadEvidenceAttachment, readMirroredSessionToken } from "@/lib/evidenceDownload";
 
 type MissionAuditPanelProps = {
   missionId: number;
@@ -27,6 +28,7 @@ export default function MissionAuditPanel({ missionId, canManage }: MissionAudit
   const utils = trpc.useUtils();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<number | null>(null);
   const activityQuery = trpc.missions.activity.useQuery({ missionId }, { retry: false });
   const attachmentsQuery = trpc.missions.attachments.useQuery({ missionId }, { retry: false });
   const notificationsQuery = trpc.missions.notifications.useQuery({ missionId }, { retry: false });
@@ -46,6 +48,31 @@ export default function MissionAuditPanel({ missionId, canManage }: MissionAudit
     },
     onError: (error) => setNotice(error.message),
   });
+
+  const openEvidence = async (attachment: { id: number; url: string; fileName: string }) => {
+    if (downloadingId !== null) return;
+    setDownloadingId(attachment.id);
+    setNotice(null);
+    try {
+      const result = await downloadEvidenceAttachment({
+        url: attachment.url,
+        fileName: attachment.fileName,
+        token: readMirroredSessionToken(),
+      });
+      if (!result.ok) {
+        if (result.network) {
+          // Transport failure (offline, or the object store sent no CORS headers
+          // for the redirect). A direct navigation still works wherever the
+          // session cookie is available, which is the pre-existing behaviour.
+          window.open(attachment.url, "_blank", "noopener,noreferrer");
+          return;
+        }
+        setNotice(result.message);
+      }
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -71,7 +98,7 @@ export default function MissionAuditPanel({ missionId, canManage }: MissionAudit
     {notice && <p className="audit-notice">{notice}</p>}
     <div className="audit-grid">
       <section className="activity-ledger"><strong>Mission activity</strong>{activityQuery.isLoading ? <p>Loading activity ledger…</p> : activityQuery.data?.length ? activityQuery.data.slice(0, 6).map((event) => <article key={event.id}><time>{formatTime(event.createdAt)}</time><div><b>{event.action.replaceAll("_", " ")}</b><p>{event.summary}</p><small>{event.actorName ?? event.actorEmail ?? "NEXUS system"}</small></div></article>) : <p>No recorded mission activity yet.</p>}</section>
-      <section className="attachment-ledger"><strong><Paperclip size={13} /> Evidence attachments</strong>{attachmentsQuery.data?.length ? <div className="attachment-list">{attachmentsQuery.data.map((attachment) => <a key={attachment.id} href={attachment.url} target="_blank" rel="noreferrer"><FileText size={14} /><span><b>{attachment.fileName}</b><small>{Math.ceil(attachment.sizeBytes / 1024)} KB · {attachment.uploaderName ?? attachment.uploaderEmail ?? "Operator"}</small></span></a>)}</div> : <p>No stored evidence attachments.</p>}{canManage && <div className="attachment-upload"><input aria-label="Evidence attachment" type="file" onChange={handleFileChange} /><button onClick={uploadEvidence} disabled={!selectedFile || attachMutation.isPending}><Upload size={13} /> {attachMutation.isPending ? "Uploading…" : "Store evidence"}</button>{selectedFile && <small>{selectedFile.name}</small>}</div>}</section>
+      <section className="attachment-ledger"><strong><Paperclip size={13} /> Evidence attachments</strong>{attachmentsQuery.data?.length ? <div className="attachment-list">{attachmentsQuery.data.map((attachment) => <a key={attachment.id} href={attachment.url} target="_blank" rel="noreferrer" aria-busy={downloadingId === attachment.id} onClick={(event) => { event.preventDefault(); void openEvidence(attachment); }}><FileText size={14} /><span><b>{attachment.fileName}</b><small>{Math.ceil(attachment.sizeBytes / 1024)} KB · {attachment.uploaderName ?? attachment.uploaderEmail ?? "Operator"}{downloadingId === attachment.id ? " · preparing download…" : ""}</small></span></a>)}</div> : <p>No stored evidence attachments.</p>}{canManage && <div className="attachment-upload"><input aria-label="Evidence attachment" type="file" onChange={handleFileChange} /><button onClick={uploadEvidence} disabled={!selectedFile || attachMutation.isPending}><Upload size={13} /> {attachMutation.isPending ? "Uploading…" : "Store evidence"}</button>{selectedFile && <small>{selectedFile.name}</small>}</div>}</section>
       <section className="notification-ledger"><strong><BellRing size={13} /> Approval alerts</strong>{notificationsQuery.data?.length ? notificationsQuery.data.slice(0, 4).map((notification) => <article key={notification.id}><p><span>{notification.title}</span><em className={notification.status}>{notification.status}</em></p><small>{notification.content}</small><time>{formatTime(notification.createdAt)}</time></article>) : <p>Approval alerts appear here when requests enter the pending queue.</p>}</section>
     </div>
   </section>;

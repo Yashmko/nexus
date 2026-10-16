@@ -7,8 +7,19 @@ import { notifyOwner } from "./_core/notification";
 import { storagePut } from "./storage";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _testDb: ReturnType<typeof drizzle> | null = null;
+
+/**
+ * Test-only seam: lets the security test-suite run these helpers against an
+ * isolated in-memory database so authorization rules can be exercised without
+ * touching a real MySQL instance. Production code never calls this.
+ */
+export function __setTestDatabase(db: unknown): void {
+  _testDb = (db as ReturnType<typeof drizzle> | null) ?? null;
+}
 
 export async function getDb() {
+  if (_testDb) return _testDb;
   if (!_db && process.env.DATABASE_URL) {
     try {
       _db = drizzle(process.env.DATABASE_URL);
@@ -233,6 +244,12 @@ export async function assignMission(actor: Actor, missionId: number, userId: num
 export async function requestMissionApproval(actor: Actor, missionId: number, input: { type: string; summary: string; assignedApproverId?: number | null }) {
   const mission = await getMission(actor, missionId);
   if (!mission) return null;
+  // Separation of duties: an operator may not name themselves as the approver of
+  // their own request. Without this, one account can raise and decide the same
+  // approval, which turns the governance gate into a self-issued receipt.
+  if (input.assignedApproverId != null && input.assignedApproverId === actor.id) {
+    throw new Error("An approval request cannot be assigned to its own requester.");
+  }
   const db = await getDb();
   if (!db) throw new Error("Mission storage is unavailable. Configure the project database and try again.");
   await db.insert(missionApprovals).values({ missionId, requestedById: actor.id, type: input.type, summary: input.summary, assignedApproverId: input.assignedApproverId ?? null });
@@ -266,6 +283,11 @@ export async function decideMissionApproval(actor: Actor, approvalId: number, de
   const record = approval[0];
   if (!record) return null;
   if (record.status !== "pending") throw new Error("Only a pending approval can be decided.");
+  if (record.requestedById === actor.id) {
+    // Separation of duties (applies to administrators too, so the self-approved
+    // case cannot be recreated with an elevated account).
+    throw new Error("An approval cannot be decided by the operator who requested it (separation of duties).");
+  }
   if (actor.role !== "admin" && record.assignedApproverId !== actor.id) throw new Error("Only the assigned approver or an administrator can decide this request.");
   await db.update(missionApprovals).set({ status: decision, decisionNote, decidedById: actor.id, decidedAt: new Date() }).where(eq(missionApprovals.id, approvalId));
   await recordMissionActivity(record.missionId, actor.id, `approval_${decision}`, `${decision === "approved" ? "Approved" : "Rejected"} ${record.type} request.`, { approvalId, decisionNote });
